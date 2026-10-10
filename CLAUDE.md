@@ -58,6 +58,22 @@ async def get_book(
 - `XCreate` ichida `tenant_id`, `id`, `status` kabi server belgilaydigan maydonlar bo'lmaydi (mass assignment).
 - O'chirish yumshoq (`is_active = False`). Yumshoq o'chiriladigan jadvaldagi noyoblik qisman indeks bilan beriladi: `WHERE is_active`.
 
+## Do'konlar (multi-tenancy) va RLS
+
+- `tenants` va `memberships` platforma jadvallari: RLS yo'q, so'rovlar slug yoki id bo'yicha aniq filtrlanadi.
+- Do'konga tegishli har bir yangi jadvalda `tenant_id BIGINT NOT NULL REFERENCES tenants(id)` bo'ladi va migratsiyada `database/rls.py` dagi `enable_tenant_rls("jadval")` chaqiriladi. Downgrade'da `disable_tenant_rls`.
+- Route do'konni o'z parametrlaridan emas, dependency'dan oladi: vitrina uchun `auth/tenant.py` dagi `get_storefront_tenant`, admin panel uchun 3-qadamdagi member dependency. Ular sessiyani `bind_tenant(db, tenant_id)` bilan do'konga bog'laydi.
+- Bog'lanmagan sessiya do'kon jadvallaridan hech narsa ko'rmaydi (xavfsiz standart). Fon vazifalari `SessionLocal()` ochib, o'zlari `bind_tenant` chaqiradi.
+- Vitrina API'si slug bo'yicha: `/storefront/{slug}/...`. Subdomen (`varaq.javon.uz`) ni Next.js shu yo'lga aylantiradi, API `Host` sarlavhasiga ishonmaydi.
+- Slug hech qachon bo'shatilmaydi (o'chirilgan do'konniki ham), shuning uchun `uq_tenants_slug` oddiy UNIQUE.
+- Relation'lar `lazy="raise"`: kerakli bog'lanish `selectinload` bilan aniq yuklanadi.
+
+## Testlar
+
+- Bazasiz unit testlar har doim ishlaydi. Bazali testlar `pytestmark = pytest.mark.db` bilan belgilanadi va `.env` dagi `TEST_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL` bo'lmasa o'tkazib yuboriladi.
+- Test bazasi nomi `_test` bilan tugashi shart: testlar uni har safar tozalaydi.
+- Har bir yangi do'kon jadvali uchun test: boshqa do'konning yozuvi ko'rinmaydi va unga yozib bo'lmaydi.
+
 ## Async qoidalari
 
 - Hamma narsa `async def` va `AsyncSession`.

@@ -30,6 +30,8 @@ class Settings(BaseSettings):
 
     # Exact origins only (JSON list in env). Credentials are allowed, so never "*".
     CORS_ORIGINS: list[str] = []
+    # Free trial for a new store, in days.
+    TRIAL_DAYS: int = 14
 
     # --- database -----------------------------------------------------------
     DATABASE_URL: PostgresDsn

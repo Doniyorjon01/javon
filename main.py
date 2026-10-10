@@ -20,7 +20,7 @@ from config import VERSION, settings
 from database.config import engine
 from errors import register_exception_handlers
 from middleware import RequestContextMiddleware
-from routers import health
+from routers import health, storefront, tenants
 from utils.log import configure_logging
 from utils.redis_cache import create_redis
 
@@ -63,6 +63,9 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(health.router)
+    app.include_router(health.router)
+    app.include_router(tenants.router)
+    app.include_router(storefront.router)
 
     add_pagination(app)
     return app

@@ -25,6 +25,12 @@ class Msg(StrEnum):
     # --- auth ---------------------------------------------------------------
     INVALID_CREDENTIALS = "invalid_credentials"
     FORBIDDEN = "forbidden"
+    # --- stores -------------------------------------------------------------
+    STORE_NOT_FOUND = "store_not_found"
+    SLUG_TAKEN = "slug_taken"
+    SLUG_RESERVED = "slug_reserved"
+    SLUG_CHECK_EMPTY = "slug_check_empty"
+    LOCATION_INCOMPLETE = "location_incomplete"
 
 
 MESSAGES: dict[Msg, dict[Lang, str]] = {
@@ -67,6 +73,31 @@ MESSAGES: dict[Msg, dict[Lang, str]] = {
         Lang.uz: "Bu amalni bajarishga ruxsatingiz yoʻq.",
         Lang.ru: "У вас нет прав на это действие.",
         Lang.en: "You are not allowed to do this.",
+    },
+    Msg.STORE_NOT_FOUND: {
+        Lang.uz: "Doʻkon topilmadi.",
+        Lang.ru: "Магазин не найден.",
+        Lang.en: "Store not found.",
+    },
+    Msg.SLUG_TAKEN: {
+        Lang.uz: "«{}» manzili band. Boshqasini tanlang.",
+        Lang.ru: "Адрес «{}» уже занят. Выберите другой.",
+        Lang.en: "The address “{}” is taken. Please choose another one.",
+    },
+    Msg.SLUG_RESERVED: {
+        Lang.uz: "«{}» manzilini ishlatib boʻlmaydi. Boshqasini tanlang.",
+        Lang.ru: "Адрес «{}» использовать нельзя. Выберите другой.",
+        Lang.en: "The address “{}” cannot be used. Please choose another one.",
+    },
+    Msg.SLUG_CHECK_EMPTY: {
+        Lang.uz: "Doʻkon nomini yoki sayt manzilini kiriting.",
+        Lang.ru: "Введите название магазина или адрес сайта.",
+        Lang.en: "Enter the store name or the site address.",
+    },
+    Msg.LOCATION_INCOMPLETE: {
+        Lang.uz: "Xaritadagi joylashuv toʻliq emas: kenglik va uzunlik birga berilishi kerak.",
+        Lang.ru: "Местоположение неполное: широта и долгота указываются вместе.",
+        Lang.en: "The location is incomplete: latitude and longitude go together.",
     },
 }
 
