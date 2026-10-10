@@ -1,0 +1,83 @@
+# Local development stack. Production adds Caddy, backups and the frontend later.
+#   docker compose up -d --build    build and start
+#   docker compose down             stop (data stays in volumes)
+#
+# Every port is bound to 127.0.0.1: nothing here is reachable from the network.
+
+name: javon
+
+x-backend-env: &backend-env
+  ENV: ${ENV:-local}
+  DEBUG: ${DEBUG:-true}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+  DATABASE_URL: postgresql+asyncpg://javon_app:${JAVON_APP_PASSWORD:?set in .env}@postgres:5432/javon
+  MIGRATION_DATABASE_URL: postgresql+asyncpg://javon_owner:${JAVON_OWNER_PASSWORD:?set in .env}@postgres:5432/javon
+  REDIS_URL: redis://redis:6379/0
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set in .env}
+      JAVON_OWNER_PASSWORD: ${JAVON_OWNER_PASSWORD:?set in .env}
+      JAVON_APP_PASSWORD: ${JAVON_APP_PASSWORD:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      # -h 127.0.0.1 (TCP): during first-time init the server listens only on the
+      # unix socket, so this stays "unhealthy" until the init script has finished.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U javon_owner -d javon"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build: .
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
