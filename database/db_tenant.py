@@ -35,6 +35,21 @@ async def get_tenant(db: AsyncSession, pk: int, lang: Lang = DEFAULT_LANG) -> Te
     return tenant
 
 
+async def get_member_role(db: AsyncSession, user_id: int, tenant_id: int) -> MemberRole | None:
+    """The user's role in an existing store, or None if they do not work there.
+    Suspended stores are included: their owners still sign in to pay or export data."""
+    return await db.scalar(
+        select(Membership.role)
+        .join(Tenant, Tenant.id == Membership.tenant_id)
+        .where(
+            Membership.user_id == user_id,
+            Membership.tenant_id == tenant_id,
+            Membership.is_active.is_(True),
+            Tenant.is_active.is_(True),
+        )
+    )
+
+
 async def get_storefront_tenant(db: AsyncSession, slug: str, lang: Lang = DEFAULT_LANG) -> Tenant:
     """The store a buyer is looking at. Suspended and deleted stores look like missing ones."""
     tenant = await db.scalar(

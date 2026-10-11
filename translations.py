@@ -25,6 +25,11 @@ class Msg(StrEnum):
     # --- auth ---------------------------------------------------------------
     INVALID_CREDENTIALS = "invalid_credentials"
     FORBIDDEN = "forbidden"
+    TELEGRAM_AUTH_INVALID = "telegram_auth_invalid"
+    TELEGRAM_AUTH_EXPIRED = "telegram_auth_expired"
+    TELEGRAM_LOGIN_UNAVAILABLE = "telegram_login_unavailable"
+    ACCOUNT_DISABLED = "account_disabled"
+    ORIGIN_NOT_ALLOWED = "origin_not_allowed"
     # --- stores -------------------------------------------------------------
     STORE_NOT_FOUND = "store_not_found"
     SLUG_TAKEN = "slug_taken"
@@ -73,6 +78,31 @@ MESSAGES: dict[Msg, dict[Lang, str]] = {
         Lang.uz: "Bu amalni bajarishga ruxsatingiz yoʻq.",
         Lang.ru: "У вас нет прав на это действие.",
         Lang.en: "You are not allowed to do this.",
+    },
+    Msg.TELEGRAM_AUTH_INVALID: {
+        Lang.uz: "Telegram orqali kirish tasdiqlanmadi. Qaytadan urinib koʻring.",
+        Lang.ru: "Вход через Telegram не подтверждён. Попробуйте ещё раз.",
+        Lang.en: "Telegram sign-in could not be verified. Please try again.",
+    },
+    Msg.TELEGRAM_AUTH_EXPIRED: {
+        Lang.uz: "Kirish havolasining muddati oʻtgan. Telegram orqali qaytadan kiring.",
+        Lang.ru: "Срок действия входа истёк. Войдите через Telegram ещё раз.",
+        Lang.en: "The sign-in has expired. Please sign in with Telegram again.",
+    },
+    Msg.TELEGRAM_LOGIN_UNAVAILABLE: {
+        Lang.uz: "Telegram orqali kirish hozircha sozlanmagan.",
+        Lang.ru: "Вход через Telegram пока не настроен.",
+        Lang.en: "Telegram sign-in is not configured yet.",
+    },
+    Msg.ACCOUNT_DISABLED: {
+        Lang.uz: "Hisobingiz bloklangan. Qoʻllab-quvvatlash xizmatiga murojaat qiling.",
+        Lang.ru: "Ваш аккаунт заблокирован. Обратитесь в поддержку.",
+        Lang.en: "Your account is disabled. Please contact support.",
+    },
+    Msg.ORIGIN_NOT_ALLOWED: {
+        Lang.uz: "Soʻrov ruxsat etilmagan saytdan yuborildi.",
+        Lang.ru: "Запрос отправлен с недоверенного сайта.",
+        Lang.en: "The request came from a site that is not allowed.",
     },
     Msg.STORE_NOT_FOUND: {
         Lang.uz: "Doʻkon topilmadi.",

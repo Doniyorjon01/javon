@@ -13,7 +13,7 @@ If the API ran as the table owner, RLS would be silently skipped.
 
 from typing import Literal, Self
 
-from pydantic import Field, PostgresDsn, RedisDsn, model_validator
+from pydantic import Field, PostgresDsn, RedisDsn, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,7 +29,9 @@ class Settings(BaseSettings):
     BASE_DOMAIN: str = "javon.uz"
 
     # Exact origins only (JSON list in env). Credentials are allowed, so never "*".
+    # Also the CSRF allow-list: state-changing requests must come from one of these.
     CORS_ORIGINS: list[str] = []
+
     # Free trial for a new store, in days.
     TRIAL_DAYS: int = 14
 
@@ -44,6 +46,28 @@ class Settings(BaseSettings):
     # --- redis --------------------------------------------------------------
     REDIS_URL: RedisDsn = Field(default="redis://localhost:6379/0", validate_default=True)
 
+    # --- sign-in ------------------------------------------------------------
+    # Token of the PLATFORM bot used by the Telegram Login Widget (not a store's bot).
+    # Without it /auth/telegram answers 503.
+    TELEGRAM_LOGIN_BOT_TOKEN: SecretStr | None = None
+    # A widget payload older than this is refused (limits replay of a leaked payload).
+    TELEGRAM_AUTH_MAX_AGE_S: int = 86_400
+
+    SESSION_COOKIE_NAME: str = "javon_session"
+    SESSION_TTL_DAYS: int = 30
+    # False only for http://localhost; browsers drop Secure cookies on plain http.
+    SESSION_COOKIE_SECURE: bool = True
+    # ".javon.uz" in production so the Next.js server on javon.uz receives the cookie.
+    SESSION_COOKIE_DOMAIN: str | None = None
+
+    @field_validator("TELEGRAM_LOGIN_BOT_TOKEN", "SESSION_COOKIE_DOMAIN", mode="before")
+    @classmethod
+    def _empty_is_none(cls, v: object) -> object:
+        # `X=` in .env or `${X:-}` in Compose arrives as "" — that means "not set".
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
     @model_validator(mode="after")
     def _check_production(self) -> Self:
         if self.ENV == "production":
@@ -51,12 +75,21 @@ class Settings(BaseSettings):
                 raise ValueError("DEBUG must be false in production")
             if "*" in self.CORS_ORIGINS:
                 raise ValueError("CORS_ORIGINS must list exact origins in production")
+            if not self.SESSION_COOKIE_SECURE:
+                raise ValueError("SESSION_COOKIE_SECURE must be true in production")
+            if self.TELEGRAM_LOGIN_BOT_TOKEN is None:
+                raise ValueError("TELEGRAM_LOGIN_BOT_TOKEN is required in production")
         return self
 
     @property
     def docs_enabled(self) -> bool:
         # OpenAPI is the contract for the frontend; expose it everywhere except production.
         return self.ENV != "production"
+
+    @property
+    def dev_login_enabled(self) -> bool:
+        # Sign in without Telegram — local development and tests only.
+        return self.ENV in ("local", "test")
 
 
 VERSION = "0.1.0"

@@ -52,17 +52,27 @@ class MemberRole(StrEnum):
     STAFF = "staff"  # orders and stock only
 
 
-def str_enum(enum_cls: type[StrEnum], name: str) -> Enum:
-    """VARCHAR + CHECK instead of a native PG enum: adding a value later is a plain migration."""
+def str_enum(enum_cls: type[StrEnum]) -> Enum:
+    """
+    VARCHAR column for a StrEnum (not a native PG enum: adding a value later is a
+    plain migration). Its CHECK is declared separately with enum_check(), because
+    Enum(create_constraint=True) makes Alembic autogenerate the same CHECK two or
+    three times and the migration then fails with "constraint already exists".
+    """
     return Enum(
         enum_cls,
-        name=name,
         native_enum=False,
-        create_constraint=True,
+        create_constraint=False,
         length=16,
         values_callable=lambda members: [m.value for m in members],
         validate_strings=True,
     )
+
+
+def enum_check(column: str, enum_cls: type[StrEnum], name: str) -> CheckConstraint:
+    """CHECK (column IN (...)) built from the enum, so code and database never disagree."""
+    values = ", ".join(f"'{member.value}'" for member in enum_cls)
+    return CheckConstraint(f"{column} IN ({values})", name=name)
 
 
 class Tenant(BaseModel):
@@ -72,9 +82,9 @@ class Tenant(BaseModel):
     slug: Mapped[str] = mapped_column(String(SLUG_MAX_LENGTH), unique=True)
     name: Mapped[str] = mapped_column(String(80))
     status: Mapped[TenantStatus] = mapped_column(
-        str_enum(TenantStatus, "tenant_status"), server_default=TenantStatus.TRIAL.value
+        str_enum(TenantStatus), server_default=TenantStatus.TRIAL.value
     )
-    plan: Mapped[Plan] = mapped_column(str_enum(Plan, "tenant_plan"), server_default=Plan.STANDARD.value)
+    plan: Mapped[Plan] = mapped_column(str_enum(Plan), server_default=Plan.STANDARD.value)
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # --- look (wizard step "Ko'rinish") ---
@@ -96,6 +106,8 @@ class Tenant(BaseModel):
     memberships: Mapped[list["Membership"]] = relationship(back_populates="tenant", lazy="raise")
 
     __table_args__ = (
+        enum_check("status", TenantStatus, "tenant_status"),
+        enum_check("plan", Plan, "tenant_plan"),
         CheckConstraint(
             f"slug ~ '{SLUG_PATTERN}' AND char_length(slug) BETWEEN {SLUG_MIN_LENGTH} AND {SLUG_MAX_LENGTH}",
             name="slug_format",
@@ -117,12 +129,13 @@ class Membership(BaseModel):
     tenant_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("tenants.id", ondelete="RESTRICT"), index=True
     )
-    role: Mapped[MemberRole] = mapped_column(str_enum(MemberRole, "member_role"))
+    role: Mapped[MemberRole] = mapped_column(str_enum(MemberRole))
 
     user: Mapped["User"] = relationship(back_populates="memberships", lazy="raise")
     tenant: Mapped[Tenant] = relationship(back_populates="memberships", lazy="raise")
 
     __table_args__ = (
+        enum_check("role", MemberRole, "member_role"),
         # One active membership per person per store (a removed member can be re-added).
         Index(
             "uq_memberships_user_tenant_active",

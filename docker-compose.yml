@@ -14,6 +14,9 @@ x-backend-env: &backend-env
   DATABASE_URL: postgresql+asyncpg://javon_app:${JAVON_APP_PASSWORD:?set in .env}@postgres:5432/javon
   MIGRATION_DATABASE_URL: postgresql+asyncpg://javon_owner:${JAVON_OWNER_PASSWORD:?set in .env}@postgres:5432/javon
   REDIS_URL: redis://redis:6379/0
+  TELEGRAM_LOGIN_BOT_TOKEN: ${TELEGRAM_LOGIN_BOT_TOKEN:-}
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+  SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
 
 services:
   postgres:
@@ -26,7 +29,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5440:5432"
     healthcheck:
       # -h 127.0.0.1 (TCP): during first-time init the server listens only on the
       # unix socket, so this stays "unhealthy" until the init script has finished.
@@ -42,7 +45,7 @@ services:
     volumes:
       - redisdata:/data
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:6385:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -70,7 +73,7 @@ services:
       migrate:
         condition: service_completed_successfully
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8010:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
       interval: 10s

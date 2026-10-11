@@ -5,7 +5,7 @@ Add the import when you add a module.
 
 from models.base import Base, BaseModel
 from models.tenant import MemberRole, Membership, Plan, Tenant, TenantStatus
-from models.user import User
+from models.user import User, UserSession
 
 __all__ = [
     "Base",
@@ -16,4 +16,5 @@ __all__ = [
     "Tenant",
     "TenantStatus",
     "User",
+    "UserSession",
 ]

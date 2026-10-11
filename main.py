@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
 
+from auth import authentication
 from config import VERSION, settings
 from database.config import engine
 from errors import register_exception_handlers
@@ -63,7 +64,9 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(health.router)
-    app.include_router(health.router)
+    app.include_router(authentication.router)
+    if settings.dev_login_enabled:
+        app.include_router(authentication.dev_router)
     app.include_router(tenants.router)
     app.include_router(storefront.router)
 

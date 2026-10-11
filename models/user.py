@@ -1,15 +1,16 @@
 """
-Users
-=====
+Users and their sessions
+========================
 A person who signs in to the platform (store owner or staff). Platform-level:
 no tenant_id, no RLS. One user can belong to several stores via memberships.
 
 Buyers are NOT users: they are per-store `customers` (added with orders).
 """
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, CheckConstraint, String, false
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, String, false, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from models.base import BaseModel
@@ -36,3 +37,21 @@ class User(BaseModel):
         CheckConstraint(r"phone ~ '^\+[1-9][0-9]{6,14}$'", name="phone_e164"),
         CheckConstraint("language IN ('uz', 'ru', 'en')", name="language_supported"),
     )
+
+
+class UserSession(BaseModel):
+    """
+    One signed-in browser. The cookie holds a random token; only its SHA-256 is
+    stored, so a leaked database dump cannot be replayed as live sessions.
+    Sign-out sets is_active = False; expired rows are cleaned up by a job later.
+    """
+
+    __tablename__ = "user_sessions"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    user_agent: Mapped[str | None] = mapped_column(String(255))
+
+    user: Mapped[User] = relationship(lazy="raise")

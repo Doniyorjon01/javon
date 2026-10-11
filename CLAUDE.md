@@ -68,6 +68,15 @@ async def get_book(
 - Slug hech qachon bo'shatilmaydi (o'chirilgan do'konniki ham), shuning uchun `uq_tenants_slug` oddiy UNIQUE.
 - Relation'lar `lazy="raise"`: kerakli bog'lanish `selectinload` bilan aniq yuklanadi.
 
+## Kirish va rollar
+
+- Kirish Telegram Login Widget orqali: frontend widget ma'lumotini `POST /auth/telegram` ga o'zgartirmasdan yuboradi. Imzo `utils/telegram_auth.py` da tekshiriladi.
+- Sessiya server tomonda saqlanadi (`user_sessions`), httpOnly cookie'da tasodifiy token yuradi, bazada faqat SHA-256 xeshi turadi. JWT ishlatilmaydi.
+- Route'lar rolni dependency orqali oladi: `get_current_user`, `get_current_member` (yo'ldagi `{tenant_id}` + `bind_tenant`), `get_current_owner`, `get_current_sysadmin` (`auth/oauth2.py`).
+- Foydalanuvchi ishlamaydigan do'kon 404 qaytaradi (403 emas): do'kon borligini ham oshkor qilmaymiz.
+- CSRF: cookie bilan keladigan har bir POST/PUT/PATCH/DELETE so'rovining `Origin` sarlavhasi `CORS_ORIGINS` ichida bo'lishi shart.
+- `/auth/dev-login` faqat `ENV=local/test` da mavjud, production'da bu yo'nalish umuman ro'yxatga olinmaydi.
+
 ## Testlar
 
 - Bazasiz unit testlar har doim ishlaydi. Bazali testlar `pytestmark = pytest.mark.db` bilan belgilanadi va `.env` dagi `TEST_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL` bo'lmasa o'tkazib yuboriladi.

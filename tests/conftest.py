@@ -40,6 +40,13 @@ os.environ["MIGRATION_DATABASE_URL"] = (
     TEST_MIGRATION_DATABASE_URL or "postgresql+asyncpg://javon_owner:x@localhost:5432/javon_test"
 )
 os.environ["REDIS_URL"] = os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/15")
+# Sign-in: a fake platform bot token, the frontend origin tests send, plain-http cookies.
+TEST_BOT_TOKEN = "123456:TEST-login-bot-token"
+TRUSTED_ORIGIN = "http://frontend.test"
+os.environ["TELEGRAM_LOGIN_BOT_TOKEN"] = TEST_BOT_TOKEN
+os.environ["CORS_ORIGINS"] = f'["{TRUSTED_ORIGIN}"]'
+os.environ["SESSION_COOKIE_SECURE"] = "false"
+os.environ.pop("SESSION_COOKIE_DOMAIN", None)
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -75,7 +82,10 @@ def app() -> FastAPI:
 async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     async with (
         LifespanManager(app),
-        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http,
+        # Like our frontend: every request carries the trusted Origin (CSRF check).
+        AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers={"Origin": TRUSTED_ORIGIN}
+        ) as http,
     ):
         yield http
 
