@@ -12,8 +12,8 @@ from schemas.tenant import TenantCreate
 _telegram_ids = itertools.count(1_000_000)
 
 
-async def make_user(db: AsyncSession, first_name: str = "Test") -> User:
-    user = User(telegram_id=next(_telegram_ids), first_name=first_name)
+async def make_user(db: AsyncSession, first_name: str = "Test", *, is_platform_admin: bool = False) -> User:
+    user = User(telegram_id=next(_telegram_ids), first_name=first_name, is_platform_admin=is_platform_admin)
     db.add(user)
     await db.commit()
     return user

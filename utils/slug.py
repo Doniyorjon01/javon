@@ -14,8 +14,9 @@ otherwise someone else could take over links the old store printed on QR codes.
 """
 
 import re
-import unicodedata
 from typing import Literal
+
+from utils.translit import to_ascii_latin
 
 SLUG_MIN_LENGTH = 3
 SLUG_MAX_LENGTH = 40
@@ -34,28 +35,13 @@ RESERVED_SLUGS = frozenset(
 
 SlugProblem = Literal["invalid", "reserved"]
 
-# Uzbek and Russian Cyrillic -> Uzbek Latin. Multi-letter values on purpose (ш -> sh).
-_CYRILLIC = {
-    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "yo", "ж": "j",
-    "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o",
-    "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f", "х": "x", "ц": "ts",
-    "ч": "ch", "ш": "sh", "щ": "sh", "ъ": "", "ы": "i", "ь": "", "э": "e", "ю": "yu",
-    "я": "ya", "ў": "o", "қ": "q", "ғ": "g", "ҳ": "h",
-}  # fmt: skip
-
-# Apostrophe-like marks inside Uzbek words (o'zbek, g\u02bboya) are dropped, not
-# turned into hyphens: "O'zbek" -> "ozbek", not "o-zbek".
-_APOSTROPHES = re.compile("[\u0027\u0060\u00b4\u02bb\u02bc\u2018\u2019]")
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
 
 def slugify(text: str) -> str:
     """Store name -> slug candidate. May return "" when nothing usable is left."""
-    s = _APOSTROPHES.sub("", text.strip().lower())
-    s = "".join(_CYRILLIC.get(ch, ch) for ch in s)
-    # Remaining accents: "café" -> "cafe"; anything non-latin is dropped.
-    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
-    s = _NON_ALNUM.sub("-", s).strip("-")
+    # "O'zbek" -> "ozbek" (not "o-zbek"), "Китоб" -> "kitob", "Café" -> "cafe".
+    s = _NON_ALNUM.sub("-", to_ascii_latin(text)).strip("-")
     if s and not s[0].isalpha():
         s = f"kitob-{s}"  # "1000 kitob" -> "kitob-1000-kitob"
     return _trim(s)

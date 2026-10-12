@@ -37,6 +37,13 @@ class Msg(StrEnum):
     SLUG_CHECK_EMPTY = "slug_check_empty"
     LOCATION_INCOMPLETE = "location_incomplete"
 
+    # --- catalog ------------------------------------------------------------
+    BOOK_NOT_FOUND = "book_not_found"
+    BOOK_ISBN_NOT_FOUND = "book_isbn_not_found"
+    BOOK_ISBN_EXISTS = "book_isbn_exists"
+    INVALID_ISBN = "invalid_isbn"
+    SEARCH_QUERY_TOO_SHORT = "search_query_too_short"
+
 
 MESSAGES: dict[Msg, dict[Lang, str]] = {
     Msg.UNKNOWN_ERROR: {
@@ -128,6 +135,31 @@ MESSAGES: dict[Msg, dict[Lang, str]] = {
         Lang.uz: "Xaritadagi joylashuv toʻliq emas: kenglik va uzunlik birga berilishi kerak.",
         Lang.ru: "Местоположение неполное: широта и долгота указываются вместе.",
         Lang.en: "The location is incomplete: latitude and longitude go together.",
+    },
+    Msg.BOOK_NOT_FOUND: {
+        Lang.uz: "Kitob topilmadi.",
+        Lang.ru: "Книга не найдена.",
+        Lang.en: "Book not found.",
+    },
+    Msg.BOOK_ISBN_NOT_FOUND: {
+        Lang.uz: "ISBN {} boʻyicha kitob katalogda yoʻq. Uni yangi kitob sifatida qoʻshing.",
+        Lang.ru: "Книги с ISBN {} нет в каталоге. Добавьте её как новую книгу.",
+        Lang.en: "No book with ISBN {} in the catalog. Add it as a new book.",
+    },
+    Msg.BOOK_ISBN_EXISTS: {
+        Lang.uz: "ISBN {} bilan kitob katalogda allaqachon bor.",
+        Lang.ru: "Книга с ISBN {} уже есть в каталоге.",
+        Lang.en: "A book with ISBN {} is already in the catalog.",
+    },
+    Msg.INVALID_ISBN: {
+        Lang.uz: "«{}» toʻgʻri ISBN emas. Raqamlarni tekshiring.",
+        Lang.ru: "«{}» — неверный ISBN. Проверьте цифры.",
+        Lang.en: "“{}” is not a valid ISBN. Check the digits.",
+    },
+    Msg.SEARCH_QUERY_TOO_SHORT: {
+        Lang.uz: "Qidirish uchun kamida 2 ta harf yoki raqam kiriting.",
+        Lang.ru: "Для поиска введите хотя бы 2 буквы или цифры.",
+        Lang.en: "Enter at least 2 letters or digits to search.",
     },
 }
 

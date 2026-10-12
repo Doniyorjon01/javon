@@ -53,6 +53,7 @@ parametrlar `main:app --reload`, ishchi papka — loyiha ildizi.
 | `docker compose logs -f backend` | Backend loglari |
 | `alembic revision --autogenerate -m "..."` | Yangi migratsiya |
 | `alembic upgrade head` | Migratsiyalarni qo'llash |
+| `python -m scripts.seed_catalog books.csv` | Katalogga kitoblarni CSV'dan yuklash (`--dry-run` bilan avval tekshiring) |
 | `ruff check . && ruff format --check .` | Ruff tekshiruvi |
 | `ruff check --fix . && ruff format .` | Formatlash |
 | `pytest -q` | Testlar |

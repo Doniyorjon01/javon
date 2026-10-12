@@ -51,7 +51,7 @@ async def get_book(
 ## Database qatlami
 
 - Nomlar: `create_x`, `get_x`, `get_xs`, `update_x`, `delete_x`.
-- `get_xs` `Select` qaytaradi, router uni `await paginate(db, stmt)` qiladi.
+- `get_xs` `Select` qaytaradi, router uni `await apaginate(db, stmt)` qiladi (`fastapi_pagination.ext.sqlalchemy`; async sessiya uchun `paginate` emas, `apaginate`).
 - **Do'konga tegishli har bir funksiya `tenant_id` oladi va u bo'yicha filtrlaydi.** RLS ikkinchi himoya qatlami, birinchisi emas. hik'dagi `get_camera(db, pk)` kabi chegarasiz so'rov yozilmaydi.
 - Topilmasa: `raise generate_error(Msg.X_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND)`.
 - Update faqat yuborilgan maydonlar bo'yicha: `for k, v in data.model_dump(exclude_unset=True).items(): setattr(obj, k, v)`. `if data.x:` uslubi ishlatilmaydi, chunki u `0`, `False` va bo'sh qiymatni yo'qotadi.
@@ -67,6 +67,16 @@ async def get_book(
 - Vitrina API'si slug bo'yicha: `/storefront/{slug}/...`. Subdomen (`varaq.javon.uz`) ni Next.js shu yo'lga aylantiradi, API `Host` sarlavhasiga ishonmaydi.
 - Slug hech qachon bo'shatilmaydi (o'chirilgan do'konniki ham), shuning uchun `uq_tenants_slug` oddiy UNIQUE.
 - Relation'lar `lazy="raise"`: kerakli bog'lanish `selectinload` bilan aniq yuklanadi.
+
+## Katalog
+
+- Kitoblar bitta umumiy katalogda (`books`, `authors`, `publishers`, `book_authors`). Platforma jadvallari: RLS yo'q, ko'rinish `database/db_catalog.py` dagi `_visible_to(tenant_id)` bilan aniq filtrlanadi: `approved` hammaga, `pending` faqat qo'shgan do'konga, `rejected` hech kimga.
+- Narx va qoldiq katalogda emas, do'konning zaxirasida (6-qadam).
+- ISBN faqat ISBN-13 raqamlari ko'rinishida saqlanadi (`utils/isbn.py`). ISBN-10 avtomatik aylantiriladi. ISBN ixtiyoriy, chunki ko'p o'zbek kitoblarida yo'q.
+- `books.search_text` ni faqat `db_catalog` yozadi (`_set_search_text`). Sarlavha, muallif, nashriyot yoki ISBN o'zgarsa, qayta hisoblanadi. `utils/translit.py` qoidalari o'zgarsa, migratsiya bilan barcha `search_text` qayta hisoblanadi.
+- Qidiruv pg_trgm bilan ishlaydi: `<%` (imlo xatolari) va `LIKE` (qisman so'z), ikkalasi ham GIN indeksidan foydalanadi.
+- Enum ustunlar uchun `models/tenant.py` dagi `str_enum()` va `enum_check()` ishlatiladi. `Enum(create_constraint=True)` ishlatilmaydi: autogenerate CHECK'ni takrorlaydi.
+- Boshlang'ich katalog: `python -m scripts.seed_catalog books.csv` (format skript boshida yozilgan).
 
 ## Kirish va rollar
 
