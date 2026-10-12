@@ -21,6 +21,7 @@ class Msg(StrEnum):
     NOT_FOUND = "not_found"
     METHOD_NOT_ALLOWED = "method_not_allowed"
     SERVICE_UNAVAILABLE = "service_unavailable"
+    PAYLOAD_TOO_LARGE = "payload_too_large"
 
     # --- auth ---------------------------------------------------------------
     INVALID_CREDENTIALS = "invalid_credentials"
@@ -36,6 +37,9 @@ class Msg(StrEnum):
     SLUG_RESERVED = "slug_reserved"
     SLUG_CHECK_EMPTY = "slug_check_empty"
     LOCATION_INCOMPLETE = "location_incomplete"
+    STORE_LIMIT_REACHED = "store_limit_reached"
+    STORE_SUSPENDED = "store_suspended"
+    USER_NOT_FOUND = "user_not_found"
 
     # --- catalog ------------------------------------------------------------
     BOOK_NOT_FOUND = "book_not_found"
@@ -43,6 +47,8 @@ class Msg(StrEnum):
     BOOK_ISBN_EXISTS = "book_isbn_exists"
     INVALID_ISBN = "invalid_isbn"
     SEARCH_QUERY_TOO_SHORT = "search_query_too_short"
+    BOOK_DUPLICATE = "book_duplicate"
+    PENDING_BOOKS_LIMIT = "pending_books_limit"
 
 
 MESSAGES: dict[Msg, dict[Lang, str]] = {
@@ -160,6 +166,44 @@ MESSAGES: dict[Msg, dict[Lang, str]] = {
         Lang.uz: "Qidirish uchun kamida 2 ta harf yoki raqam kiriting.",
         Lang.ru: "Для поиска введите хотя бы 2 буквы или цифры.",
         Lang.en: "Enter at least 2 letters or digits to search.",
+    },
+    Msg.PAYLOAD_TOO_LARGE: {
+        Lang.uz: "Yuborilgan maʼlumot juda katta (koʻpi bilan {} KB).",
+        Lang.ru: "Слишком большой запрос (не более {} КБ).",
+        Lang.en: "The request is too large (at most {} KB).",
+    },
+    Msg.STORE_LIMIT_REACHED: {
+        Lang.uz: (
+            "Siz ochishingiz mumkin boʻlgan doʻkonlar soni ({}) toʻldi. "
+            "Yana doʻkon kerak boʻlsa, qoʻllab-quvvatlash xizmatiga yozing."
+        ),
+        Lang.ru: "Достигнут лимит магазинов ({}). Если нужен ещё один, напишите в поддержку.",
+        Lang.en: "You have reached your store limit ({}). Contact support if you need another store.",
+    },
+    Msg.STORE_SUSPENDED: {
+        Lang.uz: "Doʻkon toʻxtatilgan. Maʼlumotlarni koʻrish mumkin, oʻzgartirish mumkin emas.",
+        Lang.ru: "Магазин приостановлен. Данные можно смотреть, но не изменять.",
+        Lang.en: "The store is suspended. You can view its data but not change it.",
+    },
+    Msg.USER_NOT_FOUND: {
+        Lang.uz: "Foydalanuvchi topilmadi.",
+        Lang.ru: "Пользователь не найден.",
+        Lang.en: "User not found.",
+    },
+    Msg.BOOK_DUPLICATE: {
+        Lang.uz: "Bu kitob katalogda allaqachon bor. Yangisini qoʻshish oʻrniga oʻshani tanlang.",
+        Lang.ru: "Эта книга уже есть в каталоге. Выберите её вместо добавления новой.",
+        Lang.en: "This book is already in the catalog. Pick it instead of adding a new one.",
+    },
+    Msg.PENDING_BOOKS_LIMIT: {
+        Lang.uz: (
+            "Moderatsiyani kutayotgan kitoblaringiz soni chegaraga yetdi ({}). "
+            "Ular tekshirilgach, yana qoʻsha olasiz."
+        ),
+        Lang.ru: "Достигнут лимит книг на модерации ({}). Добавьте новые после проверки этих.",
+        Lang.en: (
+            "You have reached the limit of books awaiting moderation ({}). Add more once they are reviewed."
+        ),
     },
 }
 

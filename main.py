@@ -20,7 +20,7 @@ from auth import authentication
 from config import VERSION, settings
 from database.config import engine
 from errors import register_exception_handlers
-from middleware import RequestContextMiddleware
+from middleware import BodySizeLimitMiddleware, RequestContextMiddleware
 from routers import catalog, health, storefront, system, tenants
 from utils.log import configure_logging
 from utils.redis_cache import create_redis
@@ -50,8 +50,10 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
 
-    # Order matters: the middleware added last runs first. CORS wraps the request
-    # context, so even our 500 responses carry CORS headers.
+    # Order matters: the middleware added last runs first, so a request passes
+    # CORS -> request context (id, access log, 500s) -> body size limit -> routes.
+    # CORS wraps everything, so even our 413 and 500 responses carry CORS headers.
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.MAX_REQUEST_BODY_BYTES)
     app.add_middleware(RequestContextMiddleware)
     if settings.CORS_ORIGINS:
         app.add_middleware(

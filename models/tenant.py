@@ -86,6 +86,9 @@ class Tenant(BaseModel):
     )
     plan: Mapped[Plan] = mapped_column(str_enum(Plan), server_default=Plan.STANDARD.value)
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # NULL until the owner presses "launch" at the end of the setup wizard; the
+    # storefront is public only after that (db_tenant.get_storefront_tenant).
+    launched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # --- look (wizard step "Ko'rinish") ---
     theme: Mapped[str] = mapped_column(String(32), server_default="classic")

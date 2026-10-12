@@ -17,3 +17,6 @@ htmlcov/
 .idea/
 .vscode/
 *.swp
+
+# data files: real book lists are loaded with scripts/seed_catalog.py, never committed
+*.csv

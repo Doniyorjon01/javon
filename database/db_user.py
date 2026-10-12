@@ -12,7 +12,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 from fastapi import status
-from sqlalchemy import func, select, update
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +20,7 @@ from config import settings
 from errors import generate_error
 from models.tenant import Membership, Tenant
 from models.user import User, UserSession
-from schemas.user import MyStoreOut
+from schemas.user import MyStoreOut, UserAdminUpdate
 from translations import Msg
 from utils.i18n import DEFAULT_LANG, Lang
 
@@ -124,6 +124,7 @@ async def get_user_stores(db: AsyncSession, user_id: int) -> list[MyStoreOut]:
             Tenant.name,
             Tenant.status,
             Membership.role,
+            Tenant.launched_at,
         )
         .join(Tenant, Tenant.id == Membership.tenant_id)
         .where(
@@ -134,3 +135,27 @@ async def get_user_stores(db: AsyncSession, user_id: int) -> list[MyStoreOut]:
         .order_by(Tenant.name, Tenant.id)
     )
     return [MyStoreOut.model_validate(row, from_attributes=True) for row in rows]
+
+
+# ------------------------------------------------------------ platform admin
+
+
+def get_users(telegram_id: int | None = None) -> Select[tuple[User]]:
+    """All accounts, newest first; the router paginates."""
+    stmt = select(User).order_by(User.id.desc())
+    if telegram_id is not None:
+        stmt = stmt.where(User.telegram_id == telegram_id)
+    return stmt
+
+
+async def update_user_limits(
+    db: AsyncSession, pk: int, data: UserAdminUpdate, lang: Lang = DEFAULT_LANG
+) -> User:
+    user = await db.get(User, pk)
+    if user is None:
+        raise generate_error(Msg.USER_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND)
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(user, field, value)
+    await db.commit()
+    await db.refresh(user)
+    return user

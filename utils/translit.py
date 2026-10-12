@@ -15,11 +15,16 @@ anything else non-latin removed.
 The stored search_text and the user's query go through the SAME function, so
 imperfect transliteration (Russian "х" -> "x", not "kh") still matches itself.
 Changing these rules changes stored data: add a migration that recomputes
-books.search_text in the same commit.
+books.search_text, books.dedupe_key and the authors/publishers search_key in
+the same commit.
+
+detect_script() tells a Latin edition from a Cyrillic one; book_dedupe_key()
+is the identity of a book without an ISBN (see models/catalog.py).
 """
 
 import re
 import unicodedata
+from typing import Literal
 
 # Uzbek and Russian Cyrillic -> Uzbek Latin. Multi-letter values on purpose (ш -> sh).
 CYRILLIC_TO_LATIN = {
@@ -47,3 +52,48 @@ def search_key(*parts: str | None) -> str:
     """Words of all parts in one normalized, space-separated string. "" if nothing usable."""
     text = " ".join(part for part in parts if part)
     return " ".join(_NON_ALNUM.sub(" ", to_ascii_latin(text)).split())
+
+
+Script = Literal["latn", "cyrl", "other"]
+
+
+def detect_script(text: str) -> Script:
+    """
+    Which alphabet `text` is written in, by majority of its letters:
+    "O'tkan kunlar" -> "latn", "Ўтган кунлар" -> "cyrl", "1984" -> "other".
+
+    search_key() deliberately makes the Latin and Cyrillic editions of a book look
+    the same; this is what still tells them apart (they are different products).
+    """
+    latin = cyrillic = 0
+    for ch in text:
+        if not ch.isalpha():
+            continue
+        name = unicodedata.name(ch, "")
+        if name.startswith("LATIN"):
+            latin += 1
+        elif name.startswith("CYRILLIC"):
+            cyrillic += 1
+    if latin == cyrillic:  # no letters at all, or a perfect tie
+        return "other"
+    return "latn" if latin > cyrillic else "cyrl"
+
+
+def book_dedupe_key(
+    *,
+    language: str,
+    script: str,
+    title: str,
+    subtitle: str | None,
+    authors: list[str],
+    publisher: str | None,
+) -> str:
+    """
+    Identity of a book that has no ISBN: two submissions with the same key are
+    the same edition. Author order and spelling ("Qodiriy" / "Қодирий") do not
+    matter; the alphabet the book is printed in and the publisher do.
+
+        "uz|latn|otkan kunlar|abdulla qodiriy|sharq"
+    """
+    author_keys = ";".join(sorted(search_key(name) for name in authors))
+    return "|".join((language, script, search_key(title, subtitle), author_keys, search_key(publisher)))

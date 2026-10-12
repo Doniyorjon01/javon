@@ -16,6 +16,10 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+# Largest value of a PostgreSQL BIGINT. Ids from the outside are checked against it,
+# so an over-long number is a 422 instead of a database error (500).
+BIGINT_MAX = 2**63 - 1
+
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)

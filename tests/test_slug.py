@@ -45,6 +45,8 @@ def test_slugify_respects_max_length_without_trailing_hyphen() -> None:
         ("kitob_olami", "invalid"),
         ("www", "reserved"),
         ("admin", "reserved"),
+        ("webhook", "reserved"),
+        ("minio", "reserved"),
     ],
 )
 def test_slug_problem(slug: str, problem: str | None) -> None:

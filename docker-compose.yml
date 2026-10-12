@@ -7,7 +7,7 @@
 name: javon
 
 x-backend-env: &backend-env
-  ENV: ${ENV:-local}
+  ENV: ${ENV:?set ENV in .env (local, staging or production)}
   DEBUG: ${DEBUG:-true}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   CORS_ORIGINS: ${CORS_ORIGINS:-[]}

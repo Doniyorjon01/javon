@@ -30,6 +30,7 @@ RESERVED_SLUGS = frozenset(
         "javon", "login", "logout", "mail", "media", "my", "news", "ns1", "ns2", "panel",
         "pay", "payment", "register", "root", "shop", "signup", "smtp", "staging", "static",
         "status", "store", "support", "system", "telegram", "test", "www",
+        "mini", "miniapp", "minio", "webhook", "webhooks",
     }
 )  # fmt: skip
 

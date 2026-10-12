@@ -6,14 +6,16 @@ Load books into the shared catalog from a CSV file
 
 Books are added as APPROVED (visible to every store) with no submitting store.
 Safe to run again on the same file: a row whose ISBN is already in the catalog,
-or an ISBN-less row whose title and authors already exist, is skipped.
+or an ISBN-less row whose edition is already there (same title, authors,
+publisher, language and script — books.dedupe_key), is skipped.
 
 CSV: UTF-8, comma-separated, first line is the header. Columns:
     title            required
     authors          required; several authors separated by ";"
     isbn             ISBN-10 or ISBN-13, hyphens allowed; may be empty
     subtitle, publisher, language (uz|ru|en|other, default uz),
-    published_year, pages, description, mxik_code (17 digits)
+    script (latn|cyrl|other; detected from the title when empty),
+    published_year, pages, description, mxik_code (17 digits), package_code
 Unknown columns are ignored. Empty cells mean "not known".
 
 Uses DATABASE_URL from .env, like the API. A bad row is reported with its line
@@ -34,13 +36,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import db_catalog
 from database.config import SessionLocal, engine
-from models.catalog import Book, BookStatus
+from models.catalog import Book, BookScript, BookStatus
 from schemas.catalog import BookCreate
-from utils.translit import search_key
+from utils.translit import book_dedupe_key, detect_script
 
 FIELDS = (
-    "isbn", "title", "subtitle", "authors", "publisher", "language",
-    "published_year", "pages", "description", "mxik_code",
+    "isbn", "title", "subtitle", "authors", "publisher", "language", "script",
+    "published_year", "pages", "description", "mxik_code", "package_code",
 )  # fmt: skip
 
 
@@ -66,8 +68,18 @@ def parse_row(row: dict[str, str | None]) -> BookCreate:
 async def _already_loaded(db: AsyncSession, book: BookCreate) -> bool:
     if book.isbn:
         return await db.scalar(select(Book.id).where(Book.isbn13 == book.isbn).limit(1)) is not None
-    key = search_key(book.title, book.subtitle, *book.authors)
-    return (await db.scalar(select(Book.id).where(Book.search_text.startswith(key)).limit(1))) is not None
+    key = book_dedupe_key(
+        language=book.language,
+        script=book.script or BookScript(detect_script(book.title)),
+        title=book.title,
+        subtitle=book.subtitle,
+        authors=book.authors,
+        publisher=book.publisher,
+    )
+    found = await db.scalar(
+        select(Book.id).where(Book.dedupe_key == key, Book.status != BookStatus.REJECTED).limit(1)
+    )
+    return found is not None
 
 
 async def load(path: Path, *, dry_run: bool = False) -> Report:

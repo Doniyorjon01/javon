@@ -19,7 +19,7 @@ Tuzilma hik-backend'dan olingan. Undagi xatolar bu yerda takrorlanmaydi. Yangi k
 main.py         FastAPI ilovasi (create_app, lifespan). uvicorn main:app.
 config.py       Sozlamalar (settings, VERSION).
 errors.py       Xato formati va handler'lar.
-middleware.py   RequestContextMiddleware: request_id va til.
+middleware.py   RequestContextMiddleware (request_id, access log) va BodySizeLimitMiddleware (413).
 translations.py Msg kodlari va uz/ru/en matnlar.
 routers/        HTTP: parametrlar, rol tekshiruvi, javob sxemasi. Biznes mantiq YO'Q.
 database/       db_<soha>.py: barcha so'rovlar va o'zgarishlar, commit shu yerda.
@@ -66,17 +66,22 @@ async def get_book(
 - Bog'lanmagan sessiya do'kon jadvallaridan hech narsa ko'rmaydi (xavfsiz standart). Fon vazifalari `SessionLocal()` ochib, o'zlari `bind_tenant` chaqiradi.
 - Vitrina API'si slug bo'yicha: `/storefront/{slug}/...`. Subdomen (`varaq.javon.uz`) ni Next.js shu yo'lga aylantiradi, API `Host` sarlavhasiga ishonmaydi.
 - Slug hech qachon bo'shatilmaydi (o'chirilgan do'konniki ham), shuning uchun `uq_tenants_slug` oddiy UNIQUE.
+- Bitta akkaunt `users.max_stores` tagacha do'kon ochadi (standart 1, platforma admini `PATCH /system/users/{id}` bilan oshiradi). `create_tenant` foydalanuvchi qatorini `FOR NO KEY UPDATE` bilan qulflab sanaydi, shuning uchun parallel so'rovlar chegaradan o'tolmaydi.
+- Vitrina faqat egasi `POST /tenants/{id}/launch` bosgandan keyin ochiladi (`tenants.launched_at`). Ishga tushmagan, to'xtatilgan yoki o'chirilgan do'kon vitrinada "topilmadi" (404) bo'lib ko'rinadi.
+- To'xtatilgan (`suspended`) do'kon faqat o'qiladi: `get_current_member` har qanday yozish so'roviga 403 `store_suspended` qaytaradi.
 - Relation'lar `lazy="raise"`: kerakli bog'lanish `selectinload` bilan aniq yuklanadi.
 
 ## Katalog
 
-- Kitoblar bitta umumiy katalogda (`books`, `authors`, `publishers`, `book_authors`). Platforma jadvallari: RLS yo'q, ko'rinish `database/db_catalog.py` dagi `_visible_to(tenant_id)` bilan aniq filtrlanadi: `approved` hammaga, `pending` faqat qo'shgan do'konga, `rejected` hech kimga.
+- Kitoblar bitta umumiy katalogda (`books`, `authors`, `publishers`, `book_authors`). Platforma jadvallari: RLS yo'q, ko'rinish `database/db_catalog.py` dagi `_visible_to(tenant_id)` bilan aniq filtrlanadi: `approved` hammaga, `pending` faqat qo'shgan do'konga, `rejected` qidiruvda hech kimga. Qo'shgan do'kon rad etilgan kitobini id bo'yicha va `/catalog/submissions` da sababi (`review_note`) bilan ko'radi.
+- Bir do'kondan moderatsiya kutayotgan kitoblar soni `MAX_PENDING_BOOKS_PER_STORE` (50) dan oshmaydi. Tekshiruv do'kon qatorini qulflab bajariladi.
+- ISBN'siz kitobning takrori `books.dedupe_key` bilan aniqlanadi (`utils/translit.book_dedupe_key`: til, yozuv, sarlavha, mualliflar, nashriyot). Takror 409 `book_duplicate` va mavjud kitobning `book_id` sini qaytaradi. Lotin va kirill nashrlari alohida mahsulot: `books.script` (`latn`/`cyrl`/`other`), berilmasa sarlavhadan aniqlanadi.
 - Narx va qoldiq katalogda emas, do'konning zaxirasida (6-qadam).
 - ISBN faqat ISBN-13 raqamlari ko'rinishida saqlanadi (`utils/isbn.py`). ISBN-10 avtomatik aylantiriladi. ISBN ixtiyoriy, chunki ko'p o'zbek kitoblarida yo'q.
-- `books.search_text` ni faqat `db_catalog` yozadi (`_set_search_text`). Sarlavha, muallif, nashriyot yoki ISBN o'zgarsa, qayta hisoblanadi. `utils/translit.py` qoidalari o'zgarsa, migratsiya bilan barcha `search_text` qayta hisoblanadi.
+- `books.search_text` va `books.dedupe_key` ni faqat `db_catalog` yozadi (`_set_derived`). Sarlavha, muallif, nashriyot, ISBN, til yoki yozuv o'zgarsa, qayta hisoblanadi. `utils/translit.py` qoidalari o'zgarsa, migratsiya bilan ikkalasi ham qayta hisoblanadi.
 - Qidiruv pg_trgm bilan ishlaydi: `<%` (imlo xatolari) va `LIKE` (qisman so'z), ikkalasi ham GIN indeksidan foydalanadi.
 - Enum ustunlar uchun `models/tenant.py` dagi `str_enum()` va `enum_check()` ishlatiladi. `Enum(create_constraint=True)` ishlatilmaydi: autogenerate CHECK'ni takrorlaydi.
-- Boshlang'ich katalog: `python -m scripts.seed_catalog books.csv` (format skript boshida yozilgan).
+- Boshlang'ich katalog: `python -m scripts.seed_catalog kitoblar.csv` (format skript boshida yozilgan). CSV fayllar repoga qo'shilmaydi (`.gitignore`).
 
 ## Kirish va rollar
 
@@ -85,7 +90,13 @@ async def get_book(
 - Route'lar rolni dependency orqali oladi: `get_current_user`, `get_current_member` (yo'ldagi `{tenant_id}` + `bind_tenant`), `get_current_owner`, `get_current_sysadmin` (`auth/oauth2.py`).
 - Foydalanuvchi ishlamaydigan do'kon 404 qaytaradi (403 emas): do'kon borligini ham oshkor qilmaymiz.
 - CSRF: cookie bilan keladigan har bir POST/PUT/PATCH/DELETE so'rovining `Origin` sarlavhasi `CORS_ORIGINS` ichida bo'lishi shart.
-- `/auth/dev-login` faqat `ENV=local/test` da mavjud, production'da bu yo'nalish umuman ro'yxatga olinmaydi.
+- `/auth/dev-login` faqat `ENV=test` yoki `ENV=local` + `DEBUG=true` da mavjud, boshqa hollarda bu yo'nalish umuman ro'yxatga olinmaydi.
+- `ENV` majburiy, standart qiymati yo'q: ENV'siz ishga tushgan server xato beradi.
+
+## So'rov chegaralari
+
+- So'rov tanasi `MAX_REQUEST_BODY_BYTES` (1 MB) dan katta bo'lsa, 413 `payload_too_large`. Fayl yuklash yo'llari o'z chegarasini oladi (5-qadam).
+- Yo'l va so'rovdagi har bir id `Path(gt=0, le=BIGINT_MAX)` bilan cheklanadi (`schemas/base.py`): katta son 500 emas, 422 beradi.
 
 ## Testlar
 

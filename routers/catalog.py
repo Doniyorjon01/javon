@@ -9,7 +9,14 @@ GET  /tenants/{tenant_id}/catalog/isbn/{isbn}   barcode scanner: exact ISBN look
 GET  /tenants/{tenant_id}/catalog/books/{id}    one book
 POST /tenants/{tenant_id}/catalog/books         add a book that is not in the catalog;
                                                 it is "pending" until a platform admin
-                                                approves it, but this store can use it now
+                                                approves it, but this store can use it now.
+                                                409 book_duplicate carries "book_id": the
+                                                same ISBN-less book exists, use that one.
+                                                409 pending_books_limit: too many books
+                                                are waiting for moderation
+GET  /tenants/{tenant_id}/catalog/submissions?status=...
+                                                books this store added and what became of
+                                                them; rejected ones carry review_note
 
 Any member of the store (owner or staff) may do all of this.
 """
@@ -21,7 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth.oauth2 import CurrentMember, get_current_member
 from database import db_catalog
 from database.config import get_pg_db
-from models.catalog import Book
+from models.catalog import Book, BookStatus
+from schemas.base import BIGINT_MAX
 from schemas.catalog import BookCreate, BookOut
 from utils.i18n import Lang, get_lang
 from utils.pagination import CustomPage
@@ -51,7 +59,7 @@ async def get_book_by_isbn(
 
 @router.get("/books/{book_id}", response_model=BookOut)
 async def get_book(
-    book_id: int = Path(gt=0),
+    book_id: int = Path(gt=0, le=BIGINT_MAX),
     member: CurrentMember = Security(get_current_member),
     db: AsyncSession = Depends(get_pg_db),
     lang: Lang = Depends(get_lang),
@@ -67,3 +75,12 @@ async def create_book(
     lang: Lang = Depends(get_lang),
 ) -> Book:
     return await db_catalog.create_book(db, data, tenant_id=member.tenant_id, lang=lang)
+
+
+@router.get("/submissions", response_model=CustomPage[BookOut])
+async def get_submissions(
+    book_status: BookStatus | None = Query(default=None, alias="status"),
+    member: CurrentMember = Security(get_current_member),
+    db: AsyncSession = Depends(get_pg_db),
+) -> object:
+    return await apaginate(db, db_catalog.get_submissions(member.tenant_id, book_status))

@@ -1,6 +1,8 @@
 """
-Request context middleware
-==========================
+Middlewares
+===========
+RequestContextMiddleware and BodySizeLimitMiddleware (bottom of the file).
+
 Pure ASGI (not BaseHTTPMiddleware, which breaks contextvars and streaming).
 
 For every HTTP request it:
@@ -21,6 +23,7 @@ import uuid
 from contextvars import ContextVar
 
 from starlette.datastructures import Headers, MutableHeaders
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -98,3 +101,52 @@ class RequestContextMiddleware:
                 },
             )
             request_id_var.reset(token)
+
+
+class BodySizeLimitMiddleware:
+    """
+    Refuses request bodies larger than `max_bytes` with our standard 413 JSON,
+    before the application reads them into memory.
+
+      * Content-Length too big   -> answered at once, the body is never read;
+      * no Content-Length (chunked) -> bytes are counted as they arrive and the
+        read is stopped at the limit.
+
+    Routes that accept files will get their own, larger limit (step 5).
+    """
+
+    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    def _detail(self, headers: Headers) -> dict[str, str]:
+        lang = parse_accept_language(headers.get("accept-language"))
+        message = translate(Msg.PAYLOAD_TOO_LARGE, lang).format(self.max_bytes // 1024)
+        return {"code": Msg.PAYLOAD_TOO_LARGE.value, "message": message}
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = Headers(scope=scope)
+        declared = headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > self.max_bytes:
+            response = JSONResponse(status_code=413, content={"detail": self._detail(headers)})
+            await response(scope, receive, send)
+            return
+
+        received = 0
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    # An HTTPException, so FastAPI's body reader re-raises it as is and
+                    # our exception handler returns it in the standard shape.
+                    raise StarletteHTTPException(status_code=413, detail=self._detail(headers))
+            return message
+
+        await self.app(scope, limited_receive, send)

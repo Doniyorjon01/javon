@@ -21,7 +21,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # --- general ------------------------------------------------------------
-    ENV: Literal["local", "test", "staging", "production"] = "local"
+    # Required, no default: a server started without ENV must fail, not quietly run
+    # as "local" with the passwordless dev sign-in switched on.
+    ENV: Literal["local", "test", "staging", "production"]
     DEBUG: bool = False
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
@@ -34,6 +36,11 @@ class Settings(BaseSettings):
 
     # Free trial for a new store, in days.
     TRIAL_DAYS: int = 14
+
+    # Largest request body the API reads (JSON). File uploads get their own limit.
+    MAX_REQUEST_BODY_BYTES: int = 1_048_576
+    # Books one store may have waiting for moderation at the same time.
+    MAX_PENDING_BOOKS_PER_STORE: int = 50
 
     # --- database -----------------------------------------------------------
     DATABASE_URL: PostgresDsn
@@ -88,8 +95,9 @@ class Settings(BaseSettings):
 
     @property
     def dev_login_enabled(self) -> bool:
-        # Sign in without Telegram — local development and tests only.
-        return self.ENV in ("local", "test")
+        # Sign in as anyone without Telegram. Tests, or local development with DEBUG on:
+        # two independent settings must both be wrong before it reaches a real server.
+        return self.ENV == "test" or (self.ENV == "local" and self.DEBUG)
 
 
 VERSION = "0.1.0"

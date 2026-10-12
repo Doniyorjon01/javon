@@ -156,6 +156,7 @@ class TenantOut(StorefrontOut):
     status: TenantStatus
     plan: Plan
     trial_ends_at: datetime | None
+    launched_at: datetime | None  # None: the wizard is not finished, storefront hidden
     created_at: datetime
     updated_at: datetime
 

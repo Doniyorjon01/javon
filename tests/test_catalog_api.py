@@ -163,7 +163,8 @@ async def test_duplicate_isbn_and_rejection_frees_it(client: AsyncClient, db: As
     assert duplicate.json()["detail"]["code"] == "book_isbn_exists"
 
     await sign_in(client, admin)
-    assert (await client.post(f"/system/catalog/books/{first['id']}/reject")).json()["status"] == "rejected"
+    rejected = await client.post(f"/system/catalog/books/{first['id']}/reject", json={"reason": "Takror"})
+    assert rejected.json()["status"] == "rejected"
 
     await sign_in(client, owner)
     again = await client.post(f"/tenants/{store.id}/catalog/books", json=OTKAN_KUNLAR)

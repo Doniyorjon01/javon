@@ -5,9 +5,13 @@ GET   /tenants/slug-check   wizard step "Do'kon nomi": as the owner types the na
                             the frontend shows the suggested address and whether it
                             is free. Public on purpose: whether varaq.javon.uz exists
                             is public anyway.
-POST  /tenants              create a store; the caller becomes its owner
+POST  /tenants              create a store; the caller becomes its owner (at most
+                            users.max_stores stores per account, 1 by default)
 GET   /tenants/{tenant_id}  the store's settings — owner and staff
 PATCH /tenants/{tenant_id}  change look and contacts — owner only
+POST  /tenants/{tenant_id}/launch
+                            last wizard step: the storefront becomes public — owner
+                            only; calling it again changes nothing
 
 The store comes from the path through get_current_member / get_current_owner,
 which also bind the DB session to it (RLS). Never read tenant_id from a body.
@@ -70,3 +74,12 @@ async def update_tenant(
     lang: Lang = Depends(get_lang),
 ) -> Tenant:
     return await db_tenant.update_tenant(db, owner.tenant_id, data, lang)
+
+
+@router.post("/{tenant_id}/launch", response_model=TenantOut)
+async def launch_tenant(
+    owner: CurrentMember = Security(get_current_owner),
+    db: AsyncSession = Depends(get_pg_db),
+    lang: Lang = Depends(get_lang),
+) -> Tenant:
+    return await db_tenant.launch_tenant(db, owner.tenant_id, lang)

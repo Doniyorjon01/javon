@@ -8,6 +8,10 @@ BookUpdate  a platform admin corrects a book during moderation. Every field is
             optional; apply with model_dump(exclude_unset=True).
 BookOut     what the admin panel shows. `isbn` accepts ISBN-10 or ISBN-13 with
             or without hyphens; it is always returned as plain ISBN-13 digits.
+RejectIn    the moderator's reason, shown to the store that submitted the book.
+
+`script` (Latin / Cyrillic edition) may be left out: the server then detects it
+from the title.
 """
 
 from datetime import datetime
@@ -26,8 +30,11 @@ from models.catalog import (
     DESCRIPTION_MAX_LENGTH,
     MAX_AUTHORS,
     NAME_MAX_LENGTH,
+    PACKAGE_CODE_PATTERN,
+    REVIEW_NOTE_MAX_LENGTH,
     TITLE_MAX_LENGTH,
     BookLanguage,
+    BookScript,
     BookStatus,
 )
 from schemas.base import ORMModel
@@ -75,6 +82,7 @@ Year = Annotated[int, Field(ge=1450, le=2100)]
 Pages = Annotated[int, Field(ge=1, le=20000)]
 Description = Annotated[str, StringConstraints(strip_whitespace=True, max_length=DESCRIPTION_MAX_LENGTH)]
 MxikCode = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^[0-9]{17}$")]
+PackageCode = Annotated[str, StringConstraints(strip_whitespace=True, pattern=PACKAGE_CODE_PATTERN)]
 
 
 class BookCreate(BaseModel):
@@ -86,14 +94,17 @@ class BookCreate(BaseModel):
     authors: AuthorNames
     publisher: Annotated[Name | None, BeforeValidator(_empty_to_none)] = None
     language: BookLanguage = BookLanguage.UZ
+    script: BookScript | None = None  # None: detected from the title
     published_year: Year | None = None
     pages: Pages | None = None
     description: Annotated[Description | None, BeforeValidator(_empty_to_none)] = None
     mxik_code: Annotated[MxikCode | None, BeforeValidator(_empty_to_none)] = None
+    package_code: Annotated[PackageCode | None, BeforeValidator(_empty_to_none)] = None
 
 
 class BookUpdate(BaseModel):
-    """Empty string clears an optional field. `title` and `authors` cannot be cleared."""
+    """Empty string clears an optional field. `title`, `authors`, `language` and
+    `script` cannot be cleared, only replaced."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -103,10 +114,20 @@ class BookUpdate(BaseModel):
     authors: AuthorNames | None = None
     publisher: Annotated[Name | None, BeforeValidator(_empty_to_none)] = None
     language: BookLanguage | None = None
+    script: BookScript | None = None
     published_year: Year | None = None
     pages: Pages | None = None
     description: Annotated[Description | None, BeforeValidator(_empty_to_none)] = None
     mxik_code: Annotated[MxikCode | None, BeforeValidator(_empty_to_none)] = None
+    package_code: Annotated[PackageCode | None, BeforeValidator(_empty_to_none)] = None
+
+
+class RejectIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=3, max_length=REVIEW_NOTE_MAX_LENGTH)
+    ]
 
 
 class AuthorOut(ORMModel):
@@ -127,9 +148,12 @@ class BookOut(ORMModel):
     authors: list[AuthorOut]
     publisher: PublisherOut | None
     language: BookLanguage
+    script: BookScript
     published_year: int | None
     pages: int | None
     description: str | None
     mxik_code: str | None
+    package_code: str | None
     status: BookStatus
+    review_note: str | None  # set when rejected: why
     created_at: datetime

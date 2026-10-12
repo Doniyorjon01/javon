@@ -12,18 +12,34 @@ from schemas.tenant import TenantCreate
 _telegram_ids = itertools.count(1_000_000)
 
 
-async def make_user(db: AsyncSession, first_name: str = "Test", *, is_platform_admin: bool = False) -> User:
-    user = User(telegram_id=next(_telegram_ids), first_name=first_name, is_platform_admin=is_platform_admin)
+async def make_user(
+    db: AsyncSession, first_name: str = "Test", *, is_platform_admin: bool = False, max_stores: int = 1
+) -> User:
+    user = User(
+        telegram_id=next(_telegram_ids),
+        first_name=first_name,
+        is_platform_admin=is_platform_admin,
+        max_stores=max_stores,
+    )
     db.add(user)
     await db.commit()
     return user
 
 
 async def make_tenant(
-    db: AsyncSession, slug: str, owner: User | None = None, name: str = "Test store"
+    db: AsyncSession,
+    slug: str,
+    owner: User | None = None,
+    name: str = "Test store",
+    *,
+    launched: bool = True,
 ) -> Tenant:
+    """A store through the real create path. Launched by default, so its storefront is public."""
     owner = owner or await make_user(db)
-    return await db_tenant.create_tenant(db, owner.id, TenantCreate(name=name, slug=slug))
+    tenant = await db_tenant.create_tenant(db, owner.id, TenantCreate(name=name, slug=slug))
+    if launched:
+        tenant = await db_tenant.launch_tenant(db, tenant.id)
+    return tenant
 
 
 async def add_member(db: AsyncSession, tenant: Tenant, user: User, role: MemberRole) -> Membership:

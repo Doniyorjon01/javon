@@ -34,14 +34,16 @@ def generate_error(
     status_code: int = status.HTTP_400_BAD_REQUEST,
     format_values: tuple | None = None,
     headers: dict[str, str] | None = None,
+    extra: dict[str, object] | None = None,
 ) -> HTTPException:
+    """`extra` adds machine-readable fields next to code/message, e.g. {"book_id": 42}."""
     message = translate(msg, lang)
     if format_values:
         # hik passed the tuple as ONE argument ("{}".format(("a",)) -> "('a',)").
         message = message.format(*format_values)
     return HTTPException(
         status_code=status_code,
-        detail={"code": msg.value, "message": message},
+        detail={"code": msg.value, "message": message, **(extra or {})},
         headers=headers,
     )
 

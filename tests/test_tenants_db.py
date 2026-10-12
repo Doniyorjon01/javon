@@ -49,8 +49,8 @@ async def test_reserved_slug_is_refused(db: AsyncSession) -> None:
     assert exc_info.value.detail["code"] == "slug_reserved"
 
 
-async def test_one_person_can_own_several_stores(db: AsyncSession) -> None:
-    owner = await make_user(db)
+async def test_one_person_can_own_several_stores_when_allowed(db: AsyncSession) -> None:
+    owner = await make_user(db, max_stores=2)
     await make_tenant(db, "varaq", owner)
     await make_tenant(db, "varaq-chilonzor", owner)
     count = len(list(await db.scalars(select(Membership).where(Membership.user_id == owner.id))))

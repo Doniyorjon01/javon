@@ -10,7 +10,17 @@ Buyers are NOT users: they are per-store `customers` (added with orders).
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, String, false, func
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    SmallInteger,
+    String,
+    false,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from models.base import BaseModel
@@ -29,6 +39,9 @@ class User(BaseModel):
     phone: Mapped[str | None] = mapped_column(String(16))
     language: Mapped[str] = mapped_column(String(2), server_default="uz")
     is_platform_admin: Mapped[bool] = mapped_column(server_default=false(), default=False)
+    # How many stores this account may own. The platform admin raises it for a
+    # chain of bookshops; see db_tenant.create_tenant.
+    max_stores: Mapped[int] = mapped_column(SmallInteger, server_default=text("1"))
 
     # lazy="raise": async code must load relations explicitly (selectinload).
     memberships: Mapped[list["Membership"]] = relationship(back_populates="user", lazy="raise")
@@ -36,6 +49,7 @@ class User(BaseModel):
     __table_args__ = (
         CheckConstraint(r"phone ~ '^\+[1-9][0-9]{6,14}$'", name="phone_e164"),
         CheckConstraint("language IN ('uz', 'ru', 'en')", name="language_supported"),
+        CheckConstraint("max_stores BETWEEN 0 AND 100", name="max_stores_range"),
     )
 
 

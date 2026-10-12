@@ -3,10 +3,16 @@ Catalog — database layer
 ========================
 Platform-level tables (no RLS), so every store-facing query here carries an
 explicit visibility filter: approved books, plus the asking store's own pending
-ones (see models/catalog.py). Moderation functions (the platform admin) see all.
+ones (see models/catalog.py). A store may also open its own rejected books, to
+read the moderator's note, but never finds them in search. Moderation functions
+(the platform admin) see all.
 
-Every write goes through _set_search_text(), so books.search_text always
-reflects the title, authors, publisher and ISBN actually stored.
+Every write goes through _set_derived(), so books.search_text and
+books.dedupe_key always reflect the data actually stored.
+
+Store submissions are limited: at most settings.MAX_PENDING_BOOKS_PER_STORE
+waiting for moderation, and an ISBN-less book that is already in the catalog is
+refused with its id (409 book_duplicate), so the store picks the existing one.
 """
 
 from datetime import UTC, datetime
@@ -18,14 +24,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from config import settings
 from database.integrity import constraint_name
 from errors import generate_error
-from models.catalog import Author, Book, BookAuthor, BookStatus, Publisher
+from models.catalog import Author, Book, BookAuthor, BookScript, BookStatus, Publisher
+from models.tenant import Tenant
 from schemas.catalog import BookCreate, BookUpdate
 from translations import Msg
 from utils.i18n import DEFAULT_LANG, Lang
 from utils.isbn import looks_like_isbn, normalize_isbn
-from utils.translit import search_key
+from utils.translit import book_dedupe_key, detect_script, search_key
 
 ISBN_UNIQUE_INDEX = "uq_books_isbn13_live"
 MIN_QUERY_LENGTH = 2
@@ -40,6 +48,18 @@ def _visible_to(tenant_id: int) -> ColumnElement[bool]:
         or_(
             Book.status == BookStatus.APPROVED,
             and_(Book.status == BookStatus.PENDING, Book.created_by_tenant_id == tenant_id),
+        ),
+    )
+
+
+def _readable_by(tenant_id: int) -> ColumnElement[bool]:
+    """What a store may open by id: what it sees, plus its own rejected books."""
+    return or_(
+        _visible_to(tenant_id),
+        and_(
+            Book.is_active.is_(True),
+            Book.status == BookStatus.REJECTED,
+            Book.created_by_tenant_id == tenant_id,
         ),
     )
 
@@ -74,10 +94,18 @@ def search_books(tenant_id: int, query: str, lang: Lang = DEFAULT_LANG) -> Selec
 
 
 async def get_book(db: AsyncSession, tenant_id: int, book_id: int, lang: Lang = DEFAULT_LANG) -> Book:
-    book = await db.scalar(_with_relations(select(Book).where(Book.id == book_id, _visible_to(tenant_id))))
+    book = await db.scalar(_with_relations(select(Book).where(Book.id == book_id, _readable_by(tenant_id))))
     if book is None:
         raise generate_error(Msg.BOOK_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND)
     return book
+
+
+def get_submissions(tenant_id: int, book_status: BookStatus | None = None) -> Select:
+    """Books this store added, newest first; rejected ones carry the moderator's note."""
+    stmt = select(Book).where(Book.created_by_tenant_id == tenant_id, Book.is_active.is_(True))
+    if book_status is not None:
+        stmt = stmt.where(Book.status == book_status)
+    return _with_relations(stmt).order_by(Book.created_at.desc(), Book.id.desc())
 
 
 async def get_book_by_isbn(
@@ -147,13 +175,58 @@ async def _set_authors(db: AsyncSession, book: Book, names: list[str]) -> list[A
     return authors
 
 
-def _set_search_text(book: Book, authors: list[Author], publisher: Publisher | None) -> None:
-    book.search_text = search_key(
-        book.title,
-        book.subtitle,
-        *(author.name for author in authors),
-        publisher.name if publisher else None,
-        book.isbn13,
+def _dedupe_key(
+    book: Book | BookCreate, script: BookScript, authors: list[str], publisher: str | None
+) -> str:
+    return book_dedupe_key(
+        language=book.language,
+        script=script,
+        title=book.title,
+        subtitle=book.subtitle,
+        authors=authors,
+        publisher=publisher,
+    )
+
+
+def _set_derived(book: Book, authors: list[Author], publisher: Publisher | None) -> None:
+    """search_text and dedupe_key from what is stored now."""
+    names = [author.name for author in authors]
+    publisher_name = publisher.name if publisher else None
+    book.search_text = search_key(book.title, book.subtitle, *names, publisher_name, book.isbn13)
+    book.dedupe_key = _dedupe_key(book, book.script, names, publisher_name)
+
+
+async def _check_submission_allowed(db: AsyncSession, tenant_id: int, lang: Lang) -> None:
+    """
+    At most MAX_PENDING_BOOKS_PER_STORE books waiting for moderation per store.
+    The store's row is locked until commit, so one store's submissions are
+    counted one at a time (parallel requests cannot all slip under the limit)
+    and the duplicate check after this one cannot race either.
+    """
+    await db.execute(select(Tenant.id).where(Tenant.id == tenant_id).with_for_update(key_share=True))
+    pending = await db.scalar(
+        select(func.count())
+        .select_from(Book)
+        .where(
+            Book.created_by_tenant_id == tenant_id,
+            Book.status == BookStatus.PENDING,
+            Book.is_active.is_(True),
+        )
+    )
+    limit = settings.MAX_PENDING_BOOKS_PER_STORE
+    if pending >= limit:
+        await db.rollback()
+        raise generate_error(Msg.PENDING_BOOKS_LIMIT, lang, status.HTTP_409_CONFLICT, format_values=(limit,))
+
+
+async def _find_duplicate(db: AsyncSession, key: str, tenant_id: int | None) -> int | None:
+    """An existing record of the same ISBN-less edition that the caller can see."""
+    visible = _visible_to(tenant_id) if tenant_id is not None else Book.is_active.is_(True)
+    return await db.scalar(
+        select(Book.id)
+        .where(Book.dedupe_key == key, Book.status != BookStatus.REJECTED, visible)
+        .order_by(Book.id)
+        .limit(1)
     )
 
 
@@ -181,6 +254,19 @@ async def create_book(
     A store's submission (tenant_id set, PENDING) or a platform import
     (tenant_id None, usually APPROVED). One transaction: book, authors, publisher.
     """
+    script = data.script or BookScript(detect_script(data.title))
+    if tenant_id is not None:
+        await _check_submission_allowed(db, tenant_id, lang)
+    if data.isbn is None:  # with an ISBN the unique index decides
+        duplicate_id = await _find_duplicate(
+            db, _dedupe_key(data, script, data.authors, data.publisher), tenant_id
+        )
+        if duplicate_id is not None:
+            await db.rollback()
+            raise generate_error(
+                Msg.BOOK_DUPLICATE, lang, status.HTTP_409_CONFLICT, extra={"book_id": duplicate_id}
+            )
+
     publisher = await _get_or_create_publisher(db, data.publisher) if data.publisher else None
     book = Book(
         isbn13=data.isbn,
@@ -188,13 +274,16 @@ async def create_book(
         subtitle=data.subtitle,
         publisher_id=publisher.id if publisher else None,
         language=data.language,
+        script=script,
         published_year=data.published_year,
         pages=data.pages,
         description=data.description,
         mxik_code=data.mxik_code,
+        package_code=data.package_code,
         status=book_status,
         created_by_tenant_id=tenant_id,
-        search_text="-",  # replaced below, once the authors are known
+        search_text="-",  # both replaced by _set_derived() once the authors are known
+        dedupe_key="-",
     )
     db.add(book)
     try:
@@ -207,17 +296,17 @@ async def create_book(
             ) from exc
         raise
     authors = await _set_authors(db, book, data.authors)
-    _set_search_text(book, authors, publisher)
+    _set_derived(book, authors, publisher)
     await _commit_or_isbn_conflict(db, data.isbn, lang)
     return await get_any_book(db, book.id, lang)
 
 
 async def update_book(db: AsyncSession, book_id: int, data: BookUpdate, lang: Lang = DEFAULT_LANG) -> Book:
-    """Moderator's correction. Only the fields sent change; search_text is rebuilt."""
+    """Moderator's correction. Only the fields sent change; search_text and dedupe_key are rebuilt."""
     book = await get_any_book(db, book_id, lang)
     changes = data.model_dump(exclude_unset=True)
 
-    for required in ("title", "language", "authors"):
+    for required in ("title", "language", "script", "authors"):
         if required in changes and changes[required] is None:
             changes.pop(required)  # these cannot be cleared, only replaced
     if "isbn" in changes:
@@ -233,16 +322,23 @@ async def update_book(db: AsyncSession, book_id: int, data: BookUpdate, lang: La
     for field, value in changes.items():
         setattr(book, field, value)
 
-    _set_search_text(book, authors, publisher)
+    _set_derived(book, authors, publisher)
     await _commit_or_isbn_conflict(db, book.isbn13, lang)
     return await get_any_book(db, book.id, lang)
 
 
 async def set_book_status(
-    db: AsyncSession, book_id: int, book_status: BookStatus, lang: Lang = DEFAULT_LANG
+    db: AsyncSession,
+    book_id: int,
+    book_status: BookStatus,
+    lang: Lang = DEFAULT_LANG,
+    *,
+    note: str | None = None,
 ) -> Book:
+    """Approve or reject. `note` is the reason for a rejection; approving clears it."""
     book = await get_any_book(db, book_id, lang)
     book.status = book_status
+    book.review_note = note if book_status == BookStatus.REJECTED else None
     book.reviewed_at = datetime.now(UTC)
     # Approving a rejected book can collide with a newer record of the same ISBN.
     await _commit_or_isbn_conflict(db, book.isbn13, lang)
