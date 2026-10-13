@@ -23,7 +23,9 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    false,
     text,
+    true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -106,6 +108,19 @@ class Tenant(BaseModel):
     instagram_username: Mapped[str | None] = mapped_column(String(30))
     languages: Mapped[list[str]] = mapped_column(ARRAY(String(2)), server_default=text("'{uz}'"))
 
+    # --- delivery and payment (wizard step "Yetkazish va to'lov") ---
+    # Money in tiyin. Payment is cash only for now: the store's own cash register
+    # gives the fiscal receipt. Click and Payme come with the payments step.
+    pickup_enabled: Mapped[bool] = mapped_column(server_default=true())
+    delivery_enabled: Mapped[bool] = mapped_column(server_default=false())
+    delivery_fee: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
+    free_delivery_from: Mapped[int | None] = mapped_column(BigInteger)  # order subtotal; NULL = never free
+    delivery_area: Mapped[str | None] = mapped_column(String(300))  # "Toshkent shahri ichida", free text
+
+    # Last order number given out; orders are numbered 1, 2, 3... per store.
+    # Internal: changed only by db_order.create_order, never sent to clients.
+    order_seq: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
+
     memberships: Mapped[list["Membership"]] = relationship(back_populates="tenant", lazy="raise")
 
     __table_args__ = (
@@ -122,6 +137,10 @@ class Tenant(BaseModel):
             "latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180", name="location_range"
         ),
         CheckConstraint("cardinality(languages) >= 1", name="languages_not_empty"),
+        CheckConstraint("pickup_enabled OR delivery_enabled", name="some_fulfilment"),
+        CheckConstraint("delivery_fee >= 0", name="delivery_fee_not_negative"),
+        CheckConstraint("free_delivery_from > 0", name="free_delivery_from_positive"),
+        CheckConstraint("order_seq >= 0", name="order_seq_not_negative"),
     )
 
 

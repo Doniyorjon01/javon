@@ -4,3 +4,5 @@ pytest-asyncio==1.4.0
 httpx==0.28.1
 asgi-lifespan==2.1.0
 ruff==0.17.0
+# In-process S3 server for tests/test_storage_s3.py
+moto[server]==5.2.4

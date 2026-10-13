@@ -57,3 +57,18 @@ def test_empty_token_in_env_counts_as_missing(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("CORS_ORIGINS", "[]")
     with pytest.raises(ValueError, match="TELEGRAM_LOGIN_BOT_TOKEN"):
         Settings(_env_file=None)
+
+
+def test_production_needs_a_real_secret_key() -> None:
+    base = {
+        "_env_file": None,
+        "DATABASE_URL": "postgresql+asyncpg://a:b@localhost/x",
+        "ENV": "production",
+        "DEBUG": False,
+        "TELEGRAM_LOGIN_BOT_TOKEN": "1:x",
+        "SESSION_COOKIE_SECURE": True,
+    }
+    for weak in ("", "short", "dev-only-secret-change-me-in-production"):
+        with pytest.raises(ValueError, match="SECRET_KEY"):
+            Settings(**base, SECRET_KEY=weak)
+    assert Settings(**base, SECRET_KEY="x" * 64).SECRET_KEY.get_secret_value() == "x" * 64

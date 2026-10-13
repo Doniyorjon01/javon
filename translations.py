@@ -50,6 +50,37 @@ class Msg(StrEnum):
     BOOK_DUPLICATE = "book_duplicate"
     PENDING_BOOKS_LIMIT = "pending_books_limit"
 
+    # --- files --------------------------------------------------------------
+    STORAGE_UNAVAILABLE = "storage_unavailable"
+    FILE_EMPTY = "file_empty"
+    IMAGE_INVALID = "image_invalid"
+    COVER_NOT_ALLOWED = "cover_not_allowed"
+
+    # --- inventory ----------------------------------------------------------
+    INVENTORY_ITEM_NOT_FOUND = "inventory_item_not_found"
+    INVENTORY_ITEM_EXISTS = "inventory_item_exists"
+    STOCK_OUT_OF_RANGE = "stock_out_of_range"
+    PLAN_ITEM_LIMIT = "plan_item_limit"
+    LAUNCH_NEEDS_BOOKS = "launch_needs_books"
+    IMPORT_FILE_INVALID = "import_file_invalid"
+    IMPORT_NOT_FOUND = "import_not_found"
+    IMPORT_ROW_BAD_PRICE = "import_row_bad_price"
+    IMPORT_ROW_BAD_QUANTITY = "import_row_bad_quantity"
+    IMPORT_ROW_BOOK_UNKNOWN = "import_row_book_unknown"
+    IMPORT_ROW_BOOK_REJECTED = "import_row_book_rejected"
+    IMPORT_ROW_INVALID = "import_row_invalid"
+
+    # --- orders -------------------------------------------------------------
+    FULFILMENT_REQUIRED = "fulfilment_required"
+    DELIVERY_UNAVAILABLE = "delivery_unavailable"
+    PICKUP_UNAVAILABLE = "pickup_unavailable"
+    ORDER_ITEMS_UNAVAILABLE = "order_items_unavailable"
+    OUT_OF_STOCK = "out_of_stock"
+    IDEMPOTENCY_CONFLICT = "idempotency_conflict"
+    ORDER_NOT_FOUND = "order_not_found"
+    ORDER_STATUS_INVALID = "order_status_invalid"
+    TOO_MANY_REQUESTS = "too_many_requests"
+
 
 MESSAGES: dict[Msg, dict[Lang, str]] = {
     Msg.UNKNOWN_ERROR: {
@@ -204,6 +235,131 @@ MESSAGES: dict[Msg, dict[Lang, str]] = {
         Lang.en: (
             "You have reached the limit of books awaiting moderation ({}). Add more once they are reviewed."
         ),
+    },
+    Msg.STORAGE_UNAVAILABLE: {
+        Lang.uz: "Fayl omborini hozir ishlatib boʻlmaydi. Birozdan keyin qayta urinib koʻring.",
+        Lang.ru: "Хранилище файлов сейчас недоступно. Попробуйте чуть позже.",
+        Lang.en: "File storage is unavailable right now. Please try again shortly.",
+    },
+    Msg.FILE_EMPTY: {
+        Lang.uz: "Fayl boʻsh.",
+        Lang.ru: "Файл пустой.",
+        Lang.en: "The file is empty.",
+    },
+    Msg.IMAGE_INVALID: {
+        Lang.uz: "Rasmni qabul qilib boʻlmadi. JPEG, PNG yoki WebP formatidagi, juda kichik yoki juda choʻziq boʻlmagan rasm yuklang.",
+        Lang.ru: "Не удалось принять изображение. Загрузите JPEG, PNG или WebP не слишком маленького размера и обычных пропорций.",
+        Lang.en: "The image could not be accepted. Upload a JPEG, PNG or WebP picture that is not too small or too stretched.",
+    },
+    Msg.COVER_NOT_ALLOWED: {
+        Lang.uz: "Muqovani faqat oʻzingiz qoʻshgan va hali tekshirilmagan kitobga yuklay olasiz.",
+        Lang.ru: "Обложку можно загрузить только для добавленной вами книги, пока она на модерации.",
+        Lang.en: "You can only upload a cover for a book you added while it is awaiting moderation.",
+    },
+    Msg.INVENTORY_ITEM_NOT_FOUND: {
+        Lang.uz: "Bu kitob doʻkoningizda yoʻq.",
+        Lang.ru: "Этой книги нет в вашем магазине.",
+        Lang.en: "This book is not in your store.",
+    },
+    Msg.INVENTORY_ITEM_EXISTS: {
+        Lang.uz: "Bu kitob doʻkoningizda allaqachon bor.",
+        Lang.ru: "Эта книга уже есть в вашем магазине.",
+        Lang.en: "This book is already in your store.",
+    },
+    Msg.STOCK_OUT_OF_RANGE: {
+        Lang.uz: "Qoldiq manfiy boʻlib qoladi yoki juda katta.",
+        Lang.ru: "Остаток станет отрицательным или слишком большим.",
+        Lang.en: "The stock would go below zero or become too large.",
+    },
+    Msg.PLAN_ITEM_LIMIT: {
+        Lang.uz: "Tarifingiz boʻyicha kitoblar soni toʻldi ({}). Koʻproq kitob uchun tarifni oshiring.",
+        Lang.ru: "Достигнут лимит книг по тарифу ({}). Для большего числа книг смените тариф.",
+        Lang.en: "Your plan's book limit is reached ({}). Upgrade the plan to add more.",
+    },
+    Msg.LAUNCH_NEEDS_BOOKS: {
+        Lang.uz: "Doʻkonni ishga tushirish uchun kamida bitta kitob sotuvda boʻlishi kerak.",
+        Lang.ru: "Чтобы запустить магазин, добавьте в продажу хотя бы одну книгу.",
+        Lang.en: "Add at least one book for sale before launching the store.",
+    },
+    Msg.IMPORT_FILE_INVALID: {
+        Lang.uz: "Faylni oʻqib boʻlmadi. Shablon asosidagi .xlsx fayl yuklang: birinchi qatorda ustun nomlari, narx ustuni bilan, koʻpi bilan {} qator.",
+        Lang.ru: "Не удалось прочитать файл. Загрузите .xlsx по шаблону: названия столбцов в первой строке, со столбцом цены, не более {} строк.",
+        Lang.en: "The file could not be read. Upload an .xlsx made from the template: column names in the first row, a price column, at most {} rows.",
+    },
+    Msg.IMPORT_NOT_FOUND: {
+        Lang.uz: "Import topilmadi.",
+        Lang.ru: "Импорт не найден.",
+        Lang.en: "Import not found.",
+    },
+    Msg.IMPORT_ROW_BAD_PRICE: {
+        Lang.uz: "Narx notoʻgʻri: soʻmda son yozing, masalan 45000.",
+        Lang.ru: "Неверная цена: укажите сумму в сумах, например 45000.",
+        Lang.en: "Invalid price: write the amount in so'm, e.g. 45000.",
+    },
+    Msg.IMPORT_ROW_BAD_QUANTITY: {
+        Lang.uz: "Soni notoʻgʻri: 0 yoki undan katta butun son yozing.",
+        Lang.ru: "Неверное количество: укажите целое число от 0.",
+        Lang.en: "Invalid quantity: write a whole number, 0 or more.",
+    },
+    Msg.IMPORT_ROW_BOOK_UNKNOWN: {
+        Lang.uz: "Kitob katalogda topilmadi. Yangi kitob uchun nomi va muallifini yozing.",
+        Lang.ru: "Книга не найдена в каталоге. Для новой книги укажите название и автора.",
+        Lang.en: "The book is not in the catalog. For a new book, fill in the title and author.",
+    },
+    Msg.IMPORT_ROW_BOOK_REJECTED: {
+        Lang.uz: "Bu kitob avval rad etilgan: {}",
+        Lang.ru: "Эта книга ранее была отклонена: {}",
+        Lang.en: "This book was rejected earlier: {}",
+    },
+    Msg.IMPORT_ROW_INVALID: {
+        Lang.uz: "Qatorda xato bor ({} ustuni).",
+        Lang.ru: "Ошибка в строке (столбец {}).",
+        Lang.en: "The row has an error (column {}).",
+    },
+    Msg.FULFILMENT_REQUIRED: {
+        Lang.uz: "Olib ketish yoki yetkazib berishdan kamida bittasi yoqilgan boʻlishi kerak.",
+        Lang.ru: "Должен быть включён самовывоз или доставка.",
+        Lang.en: "Turn on pickup, delivery or both.",
+    },
+    Msg.DELIVERY_UNAVAILABLE: {
+        Lang.uz: "Bu doʻkon yetkazib bermaydi.",
+        Lang.ru: "Этот магазин не доставляет.",
+        Lang.en: "This store does not deliver.",
+    },
+    Msg.PICKUP_UNAVAILABLE: {
+        Lang.uz: "Bu doʻkondan olib ketib boʻlmaydi.",
+        Lang.ru: "В этом магазине нет самовывоза.",
+        Lang.en: "This store does not offer pickup.",
+    },
+    Msg.ORDER_ITEMS_UNAVAILABLE: {
+        Lang.uz: "Savatdagi baʼzi kitoblar endi sotilmayapti.",
+        Lang.ru: "Некоторые книги из корзины больше не продаются.",
+        Lang.en: "Some books in the cart are no longer for sale.",
+    },
+    Msg.OUT_OF_STOCK: {
+        Lang.uz: "Baʼzi kitoblar yetarli emas.",
+        Lang.ru: "Некоторых книг недостаточно в наличии.",
+        Lang.en: "Some books are not available in that quantity.",
+    },
+    Msg.IDEMPOTENCY_CONFLICT: {
+        Lang.uz: "Bu buyurtma boshqa maʼlumot bilan allaqachon yuborilgan. Sahifani yangilab, qayta buyurtma bering.",
+        Lang.ru: "Этот заказ уже отправлен с другими данными. Обновите страницу и оформите заказ заново.",
+        Lang.en: "This order was already sent with different details. Refresh the page and order again.",
+    },
+    Msg.ORDER_NOT_FOUND: {
+        Lang.uz: "Buyurtma topilmadi.",
+        Lang.ru: "Заказ не найден.",
+        Lang.en: "Order not found.",
+    },
+    Msg.ORDER_STATUS_INVALID: {
+        Lang.uz: "Buyurtma holatini «{}» dan «{}» ga oʻzgartirib boʻlmaydi.",
+        Lang.ru: "Нельзя изменить статус заказа с «{}» на «{}».",
+        Lang.en: "The order cannot go from «{}» to «{}».",
+    },
+    Msg.TOO_MANY_REQUESTS: {
+        Lang.uz: "Juda koʻp soʻrov. Birozdan keyin qayta urinib koʻring.",
+        Lang.ru: "Слишком много запросов. Попробуйте чуть позже.",
+        Lang.en: "Too many requests. Please try again a little later.",
     },
 }
 

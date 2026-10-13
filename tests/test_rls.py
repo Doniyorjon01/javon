@@ -102,3 +102,29 @@ async def test_bind_tenant_refuses_to_switch_store(probe: None) -> None:
         await bind_tenant(session, 1)  # same store again is fine
         with pytest.raises(RuntimeError, match="already bound"):
             await bind_tenant(session, 2)
+
+
+# Tables that carry tenant_id but are platform-level ON PURPOSE (see their models).
+PLATFORM_TABLES_WITH_TENANT_ID = {"memberships", "jobs"}
+
+
+async def test_every_store_table_has_rls(owner_engine: AsyncEngine) -> None:
+    """A new table with tenant_id and no RLS fails here, not in production."""
+    async with owner_engine.connect() as conn:
+        rows = await conn.execute(
+            text(
+                """
+                SELECT c.relname, c.relrowsecurity,
+                       EXISTS (SELECT 1 FROM pg_policies p
+                               WHERE p.tablename = c.relname AND p.policyname = 'tenant_isolation')
+                FROM pg_class c
+                JOIN information_schema.columns col
+                  ON col.table_name = c.relname AND col.column_name = 'tenant_id'
+                WHERE c.relkind = 'r' AND col.table_schema = 'public'
+                """
+            )
+        )
+        found = {name: (rls, policy) for name, rls, policy in rows}
+    store_tables = set(found) - PLATFORM_TABLES_WITH_TENANT_ID
+    assert {"inventory_items", "inventory_imports", "customers", "orders", "order_items"} <= store_tables
+    assert {name: found[name] for name in store_tables} == dict.fromkeys(store_tables, (True, True))

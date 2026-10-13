@@ -16,6 +16,8 @@ from typing import Literal, Self
 from pydantic import Field, PostgresDsn, RedisDsn, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEV_SECRET_KEY = "dev-only-secret-change-me-in-production"  # noqa: S105 — refused in production
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -33,14 +35,47 @@ class Settings(BaseSettings):
     # Exact origins only (JSON list in env). Credentials are allowed, so never "*".
     # Also the CSRF allow-list: state-changing requests must come from one of these.
     CORS_ORIGINS: list[str] = []
+    # Store subdomains (varaq.javon.uz) call the public storefront API from the
+    # browser, e.g. r"^https://[a-z0-9-]+\.javon\.uz$". CORS only: these origins are
+    # NOT trusted for cookie-authenticated writes (that is CORS_ORIGINS).
+    CORS_ORIGIN_REGEX: str | None = None
+
+    # Signs buyers' order-tracking links. Required in production (32+ characters):
+    #   openssl rand -hex 32
+    SECRET_KEY: SecretStr = SecretStr(DEV_SECRET_KEY)
 
     # Free trial for a new store, in days.
     TRIAL_DAYS: int = 14
 
     # Largest request body the API reads (JSON). File uploads get their own limit.
     MAX_REQUEST_BODY_BYTES: int = 1_048_576
-    # Books one store may have waiting for moderation at the same time.
+    # Books one store may have waiting for moderation at the same time: added by
+    # hand, and created by Excel imports (counted separately, see db_catalog).
     MAX_PENDING_BOOKS_PER_STORE: int = 50
+    MAX_PENDING_BOOKS_FROM_IMPORT: int = 2000
+
+    # --- files ----------------------------------------------------------------
+    # Uploads (logo, covers, Excel) may be larger than ordinary JSON requests.
+    MAX_UPLOAD_BYTES: int = 5 * 1024 * 1024
+    MAX_IMPORT_ROWS: int = 5000
+    # Any S3-compatible store: SeaweedFS here and on the Uzbek server (services/storage.py).
+    # Credentials empty = uploads are off and answer 503.
+    STORAGE_ENDPOINT_URL: str = "http://localhost:9010"
+    STORAGE_ACCESS_KEY: SecretStr | None = None
+    STORAGE_SECRET_KEY: SecretStr | None = None
+    STORAGE_REGION: str = "us-east-1"
+    STORAGE_BUCKET: str = "javon-media"  # public-read: covers and logos only
+    # How browsers reach that bucket (in production: Caddy or a CDN in front of it).
+    STORAGE_PUBLIC_URL: str = "http://localhost:9010/javon-media"
+
+    # --- orders -----------------------------------------------------------------
+    # Orders one IP may place in one store per window (spam guard; buyers have no account).
+    ORDER_RATE_LIMIT: int = 10
+    ORDER_RATE_WINDOW_S: int = 600
+
+    # --- background worker ------------------------------------------------------
+    WORKER_CONCURRENCY: int = 2
+    WORKER_POLL_INTERVAL_S: float = 1.0
 
     # --- database -----------------------------------------------------------
     DATABASE_URL: PostgresDsn
@@ -67,12 +102,28 @@ class Settings(BaseSettings):
     # ".javon.uz" in production so the Next.js server on javon.uz receives the cookie.
     SESSION_COOKIE_DOMAIN: str | None = None
 
-    @field_validator("TELEGRAM_LOGIN_BOT_TOKEN", "SESSION_COOKIE_DOMAIN", mode="before")
+    @field_validator(
+        "TELEGRAM_LOGIN_BOT_TOKEN",
+        "SESSION_COOKIE_DOMAIN",
+        "CORS_ORIGIN_REGEX",
+        "STORAGE_ACCESS_KEY",
+        "STORAGE_SECRET_KEY",
+        mode="before",
+    )
     @classmethod
     def _empty_is_none(cls, v: object) -> object:
         # `X=` in .env or `${X:-}` in Compose arrives as "" — that means "not set".
         if isinstance(v, str) and not v.strip():
             return None
+        return v
+
+    @field_validator("SECRET_KEY", mode="before")
+    @classmethod
+    def _empty_secret_is_dev_default(cls, v: object) -> object:
+        # `SECRET_KEY=` in a local .env: fall back to the dev value, which
+        # production refuses (see _check_production).
+        if isinstance(v, str) and not v.strip():
+            return DEV_SECRET_KEY
         return v
 
     @model_validator(mode="after")
@@ -86,7 +137,14 @@ class Settings(BaseSettings):
                 raise ValueError("SESSION_COOKIE_SECURE must be true in production")
             if self.TELEGRAM_LOGIN_BOT_TOKEN is None:
                 raise ValueError("TELEGRAM_LOGIN_BOT_TOKEN is required in production")
+            secret = self.SECRET_KEY.get_secret_value()
+            if len(secret) < 32 or secret == DEV_SECRET_KEY:
+                raise ValueError("SECRET_KEY must be set to 32+ random characters in production")
         return self
+
+    @property
+    def storage_enabled(self) -> bool:
+        return self.STORAGE_ACCESS_KEY is not None and self.STORAGE_SECRET_KEY is not None
 
     @property
     def docs_enabled(self) -> bool:

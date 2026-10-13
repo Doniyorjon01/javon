@@ -39,6 +39,9 @@ engine = create_async_engine(
     pool_size=settings.DB_POOL_SIZE,
     max_overflow=settings.DB_MAX_OVERFLOW,
     pool_pre_ping=True,
+    # Error messages and logged tracebacks must not carry query parameters: they
+    # can be phone numbers or addresses (personal data stays out of logs).
+    hide_parameters=True,
     connect_args={
         "server_settings": {
             "application_name": "javon-backend",

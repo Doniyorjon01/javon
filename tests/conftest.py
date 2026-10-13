@@ -47,6 +47,11 @@ os.environ["TELEGRAM_LOGIN_BOT_TOKEN"] = TEST_BOT_TOKEN
 os.environ["CORS_ORIGINS"] = f'["{TRUSTED_ORIGIN}"]'
 os.environ["SESSION_COOKIE_SECURE"] = "false"
 os.environ.pop("SESSION_COOKIE_DOMAIN", None)
+# Files: tests use MemoryStorage (fixture below), never a real bucket from .env.
+os.environ["STORAGE_ACCESS_KEY"] = ""
+os.environ["STORAGE_SECRET_KEY"] = ""
+os.environ["STORAGE_PUBLIC_URL"] = "http://media.test/javon-media"
+os.environ["CORS_ORIGIN_REGEX"] = ""
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -59,6 +64,7 @@ from sqlalchemy.pool import NullPool
 from database.config import SessionLocal, engine
 from main import create_app
 from models import Base
+from services.storage import MemoryStorage
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -74,8 +80,16 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 # App
 # --------------------------------------------------------------------------- #
 @pytest.fixture
-def app() -> FastAPI:
-    return create_app()
+def storage() -> MemoryStorage:
+    """Files the app stored during the test (no MinIO needed)."""
+    return MemoryStorage()
+
+
+@pytest.fixture
+def app(storage: MemoryStorage) -> FastAPI:
+    app = create_app()
+    app.state.storage = storage
+    return app
 
 
 @pytest.fixture

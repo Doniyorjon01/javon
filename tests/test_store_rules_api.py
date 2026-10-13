@@ -11,7 +11,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import MemberRole, Membership, Tenant, TenantStatus
-from tests.factories import add_member, make_tenant, make_user, sign_in
+from tests.factories import add_member, make_book, make_item, make_tenant, make_user, sign_in
 
 pytestmark = pytest.mark.db
 
@@ -109,6 +109,11 @@ async def test_storefront_is_hidden_until_the_owner_launches(client: AsyncClient
     assert (await client.post(f"/tenants/{tenant.id}/launch")).status_code == 403
 
     await sign_in(client, owner)
+    empty = await client.post(f"/tenants/{tenant.id}/launch")
+    assert empty.status_code == 409
+    assert empty.json()["detail"]["code"] == "launch_needs_books"
+
+    await make_item(tenant, await make_book(db))
     launched = await client.post(f"/tenants/{tenant.id}/launch")
     assert launched.status_code == 200, launched.text
     first_launch = launched.json()["launched_at"]

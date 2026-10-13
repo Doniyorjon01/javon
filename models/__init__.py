@@ -4,7 +4,28 @@ Add the import when you add a module.
 """
 
 from models.base import Base, BaseModel
-from models.catalog import Author, Book, BookAuthor, BookLanguage, BookScript, BookStatus, Publisher
+from models.catalog import (
+    Author,
+    Book,
+    BookAuthor,
+    BookLanguage,
+    BookScript,
+    BookSource,
+    BookStatus,
+    Publisher,
+)
+from models.inventory import ImportStatus, InventoryImport, InventoryItem
+from models.job import Job, JobStatus
+from models.order import (
+    Customer,
+    DeliveryType,
+    Order,
+    OrderChannel,
+    OrderItem,
+    OrderStatus,
+    PaymentMethod,
+    PaymentStatus,
+)
 from models.tenant import MemberRole, Membership, Plan, Tenant, TenantStatus
 from models.user import User, UserSession
 
@@ -16,9 +37,23 @@ __all__ = [
     "BookAuthor",
     "BookLanguage",
     "BookScript",
+    "BookSource",
     "BookStatus",
+    "Customer",
+    "DeliveryType",
+    "ImportStatus",
+    "InventoryImport",
+    "InventoryItem",
+    "Job",
+    "JobStatus",
     "MemberRole",
     "Membership",
+    "Order",
+    "OrderChannel",
+    "OrderItem",
+    "OrderStatus",
+    "PaymentMethod",
+    "PaymentStatus",
     "Plan",
     "Publisher",
     "Tenant",

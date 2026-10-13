@@ -3,7 +3,8 @@
 ## Loyiha
 
 - javon.uz: kitob do'konlari uchun sayt va Telegram do'kon platformasi.
-- Stack: Python 3.12, FastAPI, async SQLAlchemy 2 + asyncpg, PostgreSQL 16 (RLS), Redis, Alembic.
+- Stack: Python 3.12, FastAPI, async SQLAlchemy 2 + asyncpg, PostgreSQL 16 (RLS), Redis, Alembic,
+  SeaweedFS (S3, boto3 orqali), Pillow, openpyxl.
 - Tuzilma tekis: `app/` papkasi yo'q, hamma modul loyiha ildizida (`from config import settings`,
   `from database.config import get_pg_db`).
 - Javoblar o'zbek tilida.
@@ -19,17 +20,20 @@ Tuzilma hik-backend'dan olingan. Undagi xatolar bu yerda takrorlanmaydi. Yangi k
 main.py         FastAPI ilovasi (create_app, lifespan). uvicorn main:app.
 config.py       Sozlamalar (settings, VERSION).
 errors.py       Xato formati va handler'lar.
-middleware.py   RequestContextMiddleware (request_id, access log) va BodySizeLimitMiddleware (413).
+middleware.py   RequestContextMiddleware (request_id, access log), BodySizeLimitMiddleware (413),
+                StorefrontCORSMiddleware (do'kon subdomenlari uchun cookie'siz CORS).
 translations.py Msg kodlari va uz/ru/en matnlar.
 routers/        HTTP: parametrlar, rol tekshiruvi, javob sxemasi. Biznes mantiq YO'Q.
 database/       db_<soha>.py: barcha so'rovlar va o'zgarishlar, commit shu yerda.
 models/         SQLAlchemy jadvallari. Har biri BaseModel'dan meros oladi.
 schemas/        Pydantic: XBase, XCreate, XUpdate, XOut, XOutFull.
-services/       Tashqi xizmatlar (Telegram, fayl ombori, to'lov). Routerlar protobuf yoki
-                SDK obyektlariga tegmaydi, faqat oddiy dataclass'lar bilan ishlaydi.
-workers/        arq fon vazifalari. Har biri o'z sessiyasini ochadi (SessionLocal()).
+services/       Tashqi xizmatlar va fayllar: storage.py (S3), media.py (rasm yuklash),
+                excel.py (shablon va o'qish); keyin Telegram va to'lov. Routerlar SDK
+                obyektlariga tegmaydi.
+workers/        Fon vazifalari (`jobs` jadvali): main.py sikl, har vazifa o'z sessiyasida,
+                vazifa do'koniga bog'langan (RLS).
 auth/           Kirish va rol dependency'lari.
-utils/          i18n, pagination, redis_cache, log.
+utils/          i18n, pagination, redis_cache, log, images, phone, signing, rate_limit, translit, isbn.
 alembic/        Migratsiyalar.
 scripts/        Yordamchi skriptlar; postgres-init/ — Postgres rollari (faqat bo'sh volume'da).
 tests/          pytest.
@@ -73,7 +77,7 @@ async def get_book(
 
 ## Katalog
 
-- Kitoblar bitta umumiy katalogda (`books`, `authors`, `publishers`, `book_authors`). Platforma jadvallari: RLS yo'q, ko'rinish `database/db_catalog.py` dagi `_visible_to(tenant_id)` bilan aniq filtrlanadi: `approved` hammaga, `pending` faqat qo'shgan do'konga, `rejected` qidiruvda hech kimga. Qo'shgan do'kon rad etilgan kitobini id bo'yicha va `/catalog/submissions` da sababi (`review_note`) bilan ko'radi.
+- Kitoblar bitta umumiy katalogda (`books`, `authors`, `publishers`, `book_authors`). Platforma jadvallari: RLS yo'q, ko'rinish `database/db_catalog.py` dagi `visible_to(tenant_id)` bilan aniq filtrlanadi: `approved` hammaga, `pending` faqat qo'shgan do'konga, `rejected` qidiruvda hech kimga. Qo'shgan do'kon rad etilgan kitobini id bo'yicha va `/catalog/submissions` da sababi (`review_note`) bilan ko'radi.
 - Bir do'kondan moderatsiya kutayotgan kitoblar soni `MAX_PENDING_BOOKS_PER_STORE` (50) dan oshmaydi. Tekshiruv do'kon qatorini qulflab bajariladi.
 - ISBN'siz kitobning takrori `books.dedupe_key` bilan aniqlanadi (`utils/translit.book_dedupe_key`: til, yozuv, sarlavha, mualliflar, nashriyot). Takror 409 `book_duplicate` va mavjud kitobning `book_id` sini qaytaradi. Lotin va kirill nashrlari alohida mahsulot: `books.script` (`latn`/`cyrl`/`other`), berilmasa sarlavhadan aniqlanadi.
 - Narx va qoldiq katalogda emas, do'konning zaxirasida (6-qadam).
@@ -82,6 +86,45 @@ async def get_book(
 - Qidiruv pg_trgm bilan ishlaydi: `<%` (imlo xatolari) va `LIKE` (qisman so'z), ikkalasi ham GIN indeksidan foydalanadi.
 - Enum ustunlar uchun `models/tenant.py` dagi `str_enum()` va `enum_check()` ishlatiladi. `Enum(create_constraint=True)` ishlatilmaydi: autogenerate CHECK'ni takrorlaydi.
 - Boshlang'ich katalog: `python -m scripts.seed_catalog kitoblar.csv` (format skript boshida yozilgan). CSV fayllar repoga qo'shilmaydi (`.gitignore`).
+
+## Fayllar (5-qadam)
+
+- Muqova va logolar S3 bucket'ida (lokal va serverda SeaweedFS). Bazada faqat kalit saqlanadi (`cover_key`, `logo_key`), URL emas; javobdagi URL `STORAGE_PUBLIC_URL` dan yasaladi (`services/media.image_urls`).
+- Har bir yuklangan rasm Pillow bilan ochilib, qayta kodlanadi (`utils/images.py`): faqat JPEG/PNG/WebP, EXIF (GPS) o'chiriladi, burilish to'g'rilanadi, WebP o'lchamlari yasaladi, decompression bomb rad etiladi. Asl fayl saqlanmaydi.
+- Har yuklash yangi kalit oladi; eski fayllar faqat baza yangi kalitga o'tgandan keyin o'chiriladi. Commit muvaffaqiyatsiz bo'lsa, yangi fayllar o'chiriladi.
+- Fayl yuklaydigan yo'llar `main.UPLOAD_PATHS` da: ularga `MAX_UPLOAD_BYTES` (5 MB) chegarasi, qolganlarga 1 MB.
+- Testlar MinIO/SeaweedFS'siz ishlaydi: `storage` fixture'i `MemoryStorage`. `S3Storage` `tests/test_storage_s3.py` da haqiqiy S3 protokol serveriga (moto yoki `TEST_S3_ENDPOINT_URL`) qarshi tekshiriladi.
+
+## Fon vazifalari va outbox
+
+- Vazifa `jobs` jadvalidagi qator (`database/db_job.enqueue`). U o'zgarish bilan BITTA tranzaksiyada yoziladi va commit'ni chaqiruvchi qiladi: buyurtma va "do'konga xabar ber" vazifasi birga saqlanadi yoki birga yo'qoladi.
+- arq ishlatilmaydi: u redis<6 talab qiladi, bizda redis 8; jadval esa tranzaksion navbat beradi.
+- Worker `SELECT ... FOR UPDATE SKIP LOCKED` bilan oladi, xatoda eksponensial kutish bilan qayta urinadi, `max_attempts` dan keyin `failed`. 15 daqiqa `running` qolgan vazifa qayta navbatga qo'yiladi.
+- Handler `(db, job)` oladi, sessiya `job.tenant_id` ga bog'langan. Vazifa qayta ishga tushsa ham natija bir xil bo'lishi kerak (idempotent).
+- Payload'da faqat id'lar, shaxsiy ma'lumot yo'q.
+
+## Zaxira (6-qadam)
+
+- `inventory_items`: do'konning katalogdagi kitobga narxi (tiyin) va qoldig'i. Do'kon jadvali, RLS.
+- Narx, ko'rinish, qo'shish/olib tashlash va import — egasi; qoldiqni xodim ham o'zgartiradi.
+- Qoldiq nisbiy o'zgaradi (`/adjust`, `quantity = quantity + :delta WHERE quantity + :delta >= 0`), buyurtmalar bilan poygada yo'qolmaydi. Bazada `CHECK quantity >= 0`.
+- Tarif bo'yicha kitoblar soni chegarasi `db_inventory.PLAN_ITEM_LIMITS` (Start 300, Standart 3000, Pro cheksiz); do'kon qatori qulflanib sanaladi.
+- Do'kon kamida bitta sotuvdagi kitob bilan ishga tushadi (`launch_needs_books`).
+- Excel import: fayl `inventory_imports.file_data` da saqlanadi va worker qatorma-qator qayta ishlaydi (har qator o'z commit'i). Katalogda yo'q kitob `submitted_via = import` bilan moderatsiyaga tushadi va alohida chegaraga ega (`MAX_PENDING_BOOKS_FROM_IMPORT`). Do'konning o'zi rad etilgan kitobi qayta yuborilmaydi. Hisobotdagi xato matnlari yuklagan odam tilida.
+
+## Vitrina (7-qadam)
+
+- `/storefront/{slug}/...` ochiq, faqat ishga tushgan do'kon. Ko'rinadigan qator: faol, `is_visible`, kitob shu do'konga ko'rinadi (`db_storefront.listed`). Qoldiq soni emas, faqat `in_stock` beriladi.
+- Do'kon subdomenlari brauzerdan to'g'ridan-to'g'ri chaqiradi: `CORS_ORIGIN_REGEX` faqat `/storefront/*` uchun va hech qachon cookie bilan emas (`StorefrontCORSMiddleware`).
+
+## Buyurtmalar (8-qadam)
+
+- `create_order` bitta tranzaksiya: idempotency kaliti → do'kon qatori qulflanadi va raqam beriladi (`tenants.order_seq`) → zaxira qatorlari id tartibida `FOR UPDATE` → qoldiq tekshiriladi va kamayadi → mijoz (telefon bo'yicha bitta), buyurtma, qatorlar (nom, narx, MXIK nusxasi) va outbox vazifasi → commit.
+- Qulf tartibi hamma joyda bir xil: avval `tenants` qatori, keyin zaxira qatorlari (deadlock bo'lmaydi).
+- Narxni mijoz yubormaydi, server zaxiradan oladi. Bir IP bir do'konga `ORDER_RATE_LIMIT` dan ko'p buyurtma bera olmaydi (Redis; Redis ishlamasa ruxsat beriladi).
+- Kuzatish havolasi: `/storefront/{slug}/orders/{id}?token=` — token `SECRET_KEY` bilan HMAC (`utils/signing.py`), bazada saqlanmaydi. Noto'g'ri token = 404.
+- Holatlar `db_order.TRANSITIONS` da; olib ketiladigan buyurtma `shipping` dan o'tmaydi; bekor qilinganda qoldiq qaytadi; naqd buyurtma `completed` bo'lganda `paid`.
+- Rollback ORM obyektlarini eskirtiradi: rollback'dan keyin kerak bo'ladigan qiymatni (id, holat) oldindan o'zgaruvchiga oling, aks holda `MissingGreenlet`.
 
 ## Kirish va rollar
 
@@ -102,7 +145,9 @@ async def get_book(
 
 - Bazasiz unit testlar har doim ishlaydi. Bazali testlar `pytestmark = pytest.mark.db` bilan belgilanadi va `.env` dagi `TEST_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL` bo'lmasa o'tkazib yuboriladi.
 - Test bazasi nomi `_test` bilan tugashi shart: testlar uni har safar tozalaydi.
-- Har bir yangi do'kon jadvali uchun test: boshqa do'konning yozuvi ko'rinmaydi va unga yozib bo'lmaydi.
+- Har bir yangi do'kon jadvali uchun test: boshqa do'konning yozuvi ko'rinmaydi va unga yozib bo'lmaydi. `tests/test_rls.py::test_every_store_table_has_rls` `tenant_id` ustunli har bir jadvalda RLS va siyosat borligini tekshiradi (ataylab platforma jadvallari ro'yxatda).
+- `tests/factories.py`: `make_user`, `make_tenant` (standart holatda ishga tushgan), `make_book` (tasdiqlangan), `make_item` (do'kon javoniga, RLS bilan).
+- Poyga holatlari parallel so'rovlar bilan tekshiriladi (`asyncio.gather`): oxirgi nusxa, bir kalitli takror buyurtma, bir kitobni ikki marta qo'shish.
 
 ## Async qoidalari
 
@@ -126,6 +171,7 @@ async def get_book(
 ## Loglar va shaxsiy ma'lumot
 
 - Logga faqat id'lar yoziladi. Telefon, manzil, ism, bot tokeni va to'lov kaliti logga ham, Sentry'ga ham tushmaydi.
+- Engine `hide_parameters=True`: SQL xatolari va traceback'larda so'rov parametrlari (telefon, manzil) ko'rinmaydi.
 - Har bir log qatorida `request_id` bor.
 
 ## Migratsiyalar
