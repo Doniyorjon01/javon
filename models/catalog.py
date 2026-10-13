@@ -62,6 +62,14 @@ class BookScript(StrEnum):
     OTHER = "other"  # no letters to judge by ("1984") or another alphabet
 
 
+class BookSource(StrEnum):
+    """How a store submitted the book; NULL for books loaded by the platform.
+    Pending books are limited per source (settings.MAX_PENDING_BOOKS_*)."""
+
+    MANUAL = "manual"  # one by one in the admin panel
+    IMPORT = "import"  # from the store's Excel file
+
+
 class BookLanguage(StrEnum):
     UZ = "uz"  # O'zbekcha (lotin yoki kirill)
     RU = "ru"
@@ -140,6 +148,7 @@ class Book(BaseModel):
     created_by_tenant_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("tenants.id", ondelete="RESTRICT")
     )
+    submitted_via: Mapped[BookSource | None] = mapped_column(str_enum(BookSource))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Why the moderator rejected the book; shown to the store that submitted it.
     review_note: Mapped[str | None] = mapped_column(String(REVIEW_NOTE_MAX_LENGTH))
@@ -160,6 +169,10 @@ class Book(BaseModel):
         enum_check("status", BookStatus, "book_status"),
         enum_check("language", BookLanguage, "book_language"),
         enum_check("script", BookScript, "book_script"),
+        enum_check("submitted_via", BookSource, "book_submitted_via"),
+        CheckConstraint(
+            "(created_by_tenant_id IS NULL) = (submitted_via IS NULL)", name="submitted_via_with_tenant"
+        ),
         CheckConstraint("isbn13 ~ '^97[89][0-9]{10}$'", name="isbn13_format"),
         CheckConstraint("char_length(btrim(title)) > 0", name="title_not_blank"),
         CheckConstraint("published_year BETWEEN 1450 AND 2100", name="published_year_range"),
@@ -189,6 +202,7 @@ class Book(BaseModel):
         Index(
             "ix_books_pending",
             "created_by_tenant_id",
+            "submitted_via",
             "created_at",
             postgresql_where=text("status = 'pending'"),
         ),

@@ -11,22 +11,30 @@ GET   /tenants/{tenant_id}  the store's settings — owner and staff
 PATCH /tenants/{tenant_id}  change look and contacts — owner only
 POST  /tenants/{tenant_id}/launch
                             last wizard step: the storefront becomes public — owner
-                            only; calling it again changes nothing
+                            only; needs at least one book on sale (409
+                            launch_needs_books); calling it again changes nothing
+PUT   /tenants/{tenant_id}/logo
+                            multipart "file": JPEG, PNG or WebP up to MAX_UPLOAD_BYTES;
+                            stored as WebP variants (TenantOut.logo) — owner only
+DELETE /tenants/{tenant_id}/logo
 
 The store comes from the path through get_current_member / get_current_owner,
 which also bind the DB session to it (RLS). Never read tenant_id from a body.
 """
 
-from fastapi import APIRouter, Depends, Query, Security, status
+from fastapi import APIRouter, Depends, File, Query, Security, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.oauth2 import CurrentMember, get_current_member, get_current_owner, get_current_user
+from config import settings
 from database import db_tenant
 from database.config import get_pg_db
 from errors import generate_error
 from models.tenant import Tenant
 from models.user import User
 from schemas.tenant import SlugCheckOut, TenantCreate, TenantOut, TenantUpdate
+from services.media import read_upload
+from services.storage import Storage, get_storage
 from translations import Msg
 from utils.i18n import Lang, get_lang
 from utils.slug import slugify
@@ -83,3 +91,25 @@ async def launch_tenant(
     lang: Lang = Depends(get_lang),
 ) -> Tenant:
     return await db_tenant.launch_tenant(db, owner.tenant_id, lang)
+
+
+@router.put("/{tenant_id}/logo", response_model=TenantOut)
+async def upload_logo(
+    file: UploadFile = File(description="JPEG, PNG or WebP"),
+    owner: CurrentMember = Security(get_current_owner),
+    db: AsyncSession = Depends(get_pg_db),
+    storage: Storage = Depends(get_storage),
+    lang: Lang = Depends(get_lang),
+) -> Tenant:
+    data = await read_upload(file, settings.MAX_UPLOAD_BYTES, lang)
+    return await db_tenant.set_logo(db, storage, owner.tenant_id, data, lang)
+
+
+@router.delete("/{tenant_id}/logo", response_model=TenantOut)
+async def delete_logo(
+    owner: CurrentMember = Security(get_current_owner),
+    db: AsyncSession = Depends(get_pg_db),
+    storage: Storage = Depends(get_storage),
+    lang: Lang = Depends(get_lang),
+) -> Tenant:
+    return await db_tenant.delete_logo(db, storage, owner.tenant_id, lang)

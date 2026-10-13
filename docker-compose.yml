@@ -3,6 +3,8 @@
 #   docker compose down             stop (data stays in volumes)
 #
 # Every port is bound to 127.0.0.1: nothing here is reachable from the network.
+# Host ports avoid the other projects on this machine (5432-5435, 6379, 8000,
+# 8080, 9000, 9001 are taken): Postgres 5440, Redis 6385, API 8010, files 9010.
 
 name: javon
 
@@ -14,6 +16,14 @@ x-backend-env: &backend-env
   DATABASE_URL: postgresql+asyncpg://javon_app:${JAVON_APP_PASSWORD:?set in .env}@postgres:5432/javon
   MIGRATION_DATABASE_URL: postgresql+asyncpg://javon_owner:${JAVON_OWNER_PASSWORD:?set in .env}@postgres:5432/javon
   REDIS_URL: redis://redis:6379/0
+  STORAGE_ENDPOINT_URL: http://storage:8333
+  STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?set in .env}
+  STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?set in .env}
+  STORAGE_BUCKET: ${STORAGE_BUCKET:-javon-media}
+  # What browsers use to load covers and logos (the port published below).
+  STORAGE_PUBLIC_URL: ${STORAGE_PUBLIC_URL:-http://localhost:9010/javon-media}
+  CORS_ORIGIN_REGEX: ${CORS_ORIGIN_REGEX:-}
+  SECRET_KEY: ${SECRET_KEY:-dev-only-secret-change-me-in-production}
   TELEGRAM_LOGIN_BOT_TOKEN: ${TELEGRAM_LOGIN_BOT_TOKEN:-}
   SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
   SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
@@ -53,6 +63,41 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # S3-compatible file storage (covers, logos): SeaweedFS in one container
+  # (master + volume + filer + S3 gateway). Its credentials file is written from
+  # .env at start, so no secret is committed.
+  storage:
+    image: chrislusf/seaweedfs:4.48
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '{"identities":[{"name":"javon","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Tagging","Write"]}]}' "$$STORAGE_ACCESS_KEY" "$$STORAGE_SECRET_KEY" > /tmp/s3.json
+        exec weed server -dir=/data -ip=storage -ip.bind=0.0.0.0 -master.telemetry=false -master.volumeSizeLimitMB=1024 -volume.max=0 -s3 -s3.port=8333 -s3.config=/tmp/s3.json
+    environment:
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?set in .env}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?set in .env}
+    volumes:
+      - storagedata:/data
+    ports:
+      - "127.0.0.1:9010:8333"
+    healthcheck:
+      # Any HTTP answer (403 without credentials) means the S3 gateway is up.
+      test: ["CMD-SHELL", "wget -q -S -O /dev/null http://127.0.0.1:8333/ 2>&1 | grep -q HTTP/"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # Creates the bucket and makes it public-read (idempotent), then exits.
+  storage-init:
+    build: .
+    command: ["python", "-m", "scripts.storage_init"]
+    environment: *backend-env
+    depends_on:
+      storage:
+        condition: service_healthy
+    restart: "no"
+
   migrate:
     build: .
     command: ["alembic", "upgrade", "head"]
@@ -72,6 +117,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      storage-init:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:8010:8000"
     healthcheck:
@@ -81,6 +128,20 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # Background jobs: Excel imports, order notifications (workers/main.py).
+  worker:
+    build: .
+    command: ["python", "-m", "workers.main"]
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+    restart: unless-stopped
+
 volumes:
   pgdata:
   redisdata:
+  storagedata:

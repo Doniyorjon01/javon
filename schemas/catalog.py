@@ -24,6 +24,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    computed_field,
 )
 
 from models.catalog import (
@@ -38,6 +39,8 @@ from models.catalog import (
     BookStatus,
 )
 from schemas.base import ORMModel
+from services.media import image_urls
+from utils.images import COVER_SPEC
 from utils.isbn import normalize_isbn
 from utils.translit import search_key
 
@@ -157,3 +160,10 @@ class BookOut(ORMModel):
     status: BookStatus
     review_note: str | None  # set when rejected: why
     created_at: datetime
+    cover_key: str | None = Field(default=None, exclude=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cover(self) -> dict[str, str] | None:
+        """{"s": url, "m": url, "l": url} — 160, 320 and 640 px wide WebP; None without a cover."""
+        return image_urls(self.cover_key, COVER_SPEC)

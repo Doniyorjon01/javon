@@ -27,11 +27,14 @@ from sqlalchemy.orm import selectinload
 from config import settings
 from database.integrity import constraint_name
 from errors import generate_error
-from models.catalog import Author, Book, BookAuthor, BookScript, BookStatus, Publisher
+from models.catalog import Author, Book, BookAuthor, BookScript, BookSource, BookStatus, Publisher
 from models.tenant import Tenant
 from schemas.catalog import BookCreate, BookUpdate
+from services.media import delete_image, save_image
+from services.storage import Storage
 from translations import Msg
 from utils.i18n import DEFAULT_LANG, Lang
+from utils.images import COVER_SPEC
 from utils.isbn import looks_like_isbn, normalize_isbn
 from utils.translit import book_dedupe_key, detect_script, search_key
 
@@ -42,7 +45,7 @@ MIN_QUERY_LENGTH = 2
 # --------------------------------------------------------------------------- #
 # Reading
 # --------------------------------------------------------------------------- #
-def _visible_to(tenant_id: int) -> ColumnElement[bool]:
+def visible_to(tenant_id: int) -> ColumnElement[bool]:
     return and_(
         Book.is_active.is_(True),
         or_(
@@ -55,7 +58,7 @@ def _visible_to(tenant_id: int) -> ColumnElement[bool]:
 def _readable_by(tenant_id: int) -> ColumnElement[bool]:
     """What a store may open by id: what it sees, plus its own rejected books."""
     return or_(
-        _visible_to(tenant_id),
+        visible_to(tenant_id),
         and_(
             Book.is_active.is_(True),
             Book.status == BookStatus.REJECTED,
@@ -74,7 +77,7 @@ def search_books(tenant_id: int, query: str, lang: Lang = DEFAULT_LANG) -> Selec
     An ISBN (with or without hyphens, ISBN-10 or -13) is matched exactly;
     anything else by words, in Latin or Cyrillic, tolerating small typos.
     """
-    stmt = _with_relations(select(Book).where(_visible_to(tenant_id)))
+    stmt = _with_relations(select(Book).where(visible_to(tenant_id)))
 
     if looks_like_isbn(query):
         isbn13 = normalize_isbn(query)
@@ -115,7 +118,7 @@ async def get_book_by_isbn(
     isbn13 = normalize_isbn(raw_isbn)
     if isbn13 is None:
         raise generate_error(Msg.INVALID_ISBN, lang, format_values=(raw_isbn,))
-    book = await db.scalar(_with_relations(select(Book).where(Book.isbn13 == isbn13, _visible_to(tenant_id))))
+    book = await db.scalar(_with_relations(select(Book).where(Book.isbn13 == isbn13, visible_to(tenant_id))))
     if book is None:
         raise generate_error(
             Msg.BOOK_ISBN_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND, format_values=(isbn13,)
@@ -128,6 +131,30 @@ def get_books_for_review(book_status: BookStatus) -> Select:
     return _with_relations(select(Book).where(Book.status == book_status, Book.is_active.is_(True))).order_by(
         Book.created_at, Book.id
     )
+
+
+async def find_existing_book_by_isbn(db: AsyncSession, tenant_id: int, isbn13: str) -> Book | None:
+    return await db.scalar(select(Book).where(Book.isbn13 == isbn13, visible_to(tenant_id)))
+
+
+async def find_existing_book(db: AsyncSession, tenant_id: int, data: BookCreate) -> Book | None:
+    """
+    The catalog record this store would use for `data`, if any: the same ISBN,
+    or (without an ISBN) the same edition by dedupe_key. Excel import uses it to
+    decide between "match" and "create".
+    """
+    if data.isbn is not None:
+        return await find_existing_book_by_isbn(db, tenant_id, data.isbn)
+    else:
+        script = data.script or BookScript(detect_script(data.title))
+        key = _dedupe_key(data, script, data.authors, data.publisher)
+        stmt = (
+            select(Book)
+            .where(Book.dedupe_key == key, Book.status != BookStatus.REJECTED, visible_to(tenant_id))
+            .order_by(Book.id)
+            .limit(1)
+        )
+    return await db.scalar(stmt)
 
 
 async def get_any_book(db: AsyncSession, book_id: int, lang: Lang = DEFAULT_LANG) -> Book:
@@ -196,9 +223,17 @@ def _set_derived(book: Book, authors: list[Author], publisher: Publisher | None)
     book.dedupe_key = _dedupe_key(book, book.script, names, publisher_name)
 
 
-async def _check_submission_allowed(db: AsyncSession, tenant_id: int, lang: Lang) -> None:
+PENDING_LIMITS = {
+    BookSource.MANUAL: lambda: settings.MAX_PENDING_BOOKS_PER_STORE,
+    BookSource.IMPORT: lambda: settings.MAX_PENDING_BOOKS_FROM_IMPORT,
+}
+
+
+async def _check_submission_allowed(db: AsyncSession, tenant_id: int, source: BookSource, lang: Lang) -> None:
     """
-    At most MAX_PENDING_BOOKS_PER_STORE books waiting for moderation per store.
+    At most MAX_PENDING_BOOKS_PER_STORE books added by hand, and at most
+    MAX_PENDING_BOOKS_FROM_IMPORT from Excel files, waiting for moderation per
+    store (counted separately: a big import must not block adding one book).
     The store's row is locked until commit, so one store's submissions are
     counted one at a time (parallel requests cannot all slip under the limit)
     and the duplicate check after this one cannot race either.
@@ -209,11 +244,12 @@ async def _check_submission_allowed(db: AsyncSession, tenant_id: int, lang: Lang
         .select_from(Book)
         .where(
             Book.created_by_tenant_id == tenant_id,
+            Book.submitted_via == source,
             Book.status == BookStatus.PENDING,
             Book.is_active.is_(True),
         )
     )
-    limit = settings.MAX_PENDING_BOOKS_PER_STORE
+    limit = PENDING_LIMITS[source]()
     if pending >= limit:
         await db.rollback()
         raise generate_error(Msg.PENDING_BOOKS_LIMIT, lang, status.HTTP_409_CONFLICT, format_values=(limit,))
@@ -221,7 +257,7 @@ async def _check_submission_allowed(db: AsyncSession, tenant_id: int, lang: Lang
 
 async def _find_duplicate(db: AsyncSession, key: str, tenant_id: int | None) -> int | None:
     """An existing record of the same ISBN-less edition that the caller can see."""
-    visible = _visible_to(tenant_id) if tenant_id is not None else Book.is_active.is_(True)
+    visible = visible_to(tenant_id) if tenant_id is not None else Book.is_active.is_(True)
     return await db.scalar(
         select(Book.id)
         .where(Book.dedupe_key == key, Book.status != BookStatus.REJECTED, visible)
@@ -248,15 +284,17 @@ async def create_book(
     *,
     tenant_id: int | None,
     book_status: BookStatus = BookStatus.PENDING,
+    source: BookSource = BookSource.MANUAL,
     lang: Lang = DEFAULT_LANG,
 ) -> Book:
     """
-    A store's submission (tenant_id set, PENDING) or a platform import
-    (tenant_id None, usually APPROVED). One transaction: book, authors, publisher.
+    A store's submission (tenant_id set, PENDING; `source` says how) or a
+    platform import (tenant_id None, usually APPROVED). One transaction: book,
+    authors, publisher.
     """
     script = data.script or BookScript(detect_script(data.title))
     if tenant_id is not None:
-        await _check_submission_allowed(db, tenant_id, lang)
+        await _check_submission_allowed(db, tenant_id, source, lang)
     if data.isbn is None:  # with an ISBN the unique index decides
         duplicate_id = await _find_duplicate(
             db, _dedupe_key(data, script, data.authors, data.publisher), tenant_id
@@ -282,6 +320,7 @@ async def create_book(
         package_code=data.package_code,
         status=book_status,
         created_by_tenant_id=tenant_id,
+        submitted_via=source if tenant_id is not None else None,
         search_text="-",  # both replaced by _set_derived() once the authors are known
         dedupe_key="-",
     )
@@ -343,3 +382,53 @@ async def set_book_status(
     # Approving a rejected book can collide with a newer record of the same ISBN.
     await _commit_or_isbn_conflict(db, book.isbn13, lang)
     return await get_any_book(db, book.id, lang)
+
+
+# --------------------------------------------------------------------------- #
+# Covers
+# --------------------------------------------------------------------------- #
+async def set_cover(
+    db: AsyncSession,
+    storage: Storage,
+    book_id: int,
+    data: bytes,
+    lang: Lang = DEFAULT_LANG,
+    *,
+    tenant_id: int | None,
+) -> Book:
+    """
+    Replace a book's cover. A store (tenant_id set) may only illustrate a book it
+    submitted and that is still waiting for moderation; once approved, the cover
+    is shared by every store and only the platform admin (tenant_id None) changes it.
+    """
+    if tenant_id is None:
+        book = await get_any_book(db, book_id, lang)
+    else:
+        book = await get_book(db, tenant_id, book_id, lang)
+        if book.created_by_tenant_id != tenant_id or book.status != BookStatus.PENDING:
+            raise generate_error(Msg.COVER_NOT_ALLOWED, lang, status.HTTP_403_FORBIDDEN)
+    await db.rollback()  # do not hold the transaction open during the upload
+
+    new_key = await save_image(storage, f"covers/{book_id}", data, COVER_SPEC, lang)
+    book = await db.get(Book, book_id, with_for_update=True, populate_existing=True)
+    if book is None:  # pragma: no cover — books are never deleted
+        await delete_image(storage, new_key, COVER_SPEC)
+        raise generate_error(Msg.BOOK_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND)
+    old_key, book.cover_key = book.cover_key, new_key
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        await delete_image(storage, new_key, COVER_SPEC)
+        raise
+    await delete_image(storage, old_key, COVER_SPEC)
+    return await get_any_book(db, book_id, lang)
+
+
+async def delete_cover(db: AsyncSession, storage: Storage, book_id: int, lang: Lang = DEFAULT_LANG) -> Book:
+    """Platform admin only."""
+    book = await get_any_book(db, book_id, lang)
+    old_key, book.cover_key = book.cover_key, None
+    await db.commit()
+    await delete_image(storage, old_key, COVER_SPEC)
+    return await get_any_book(db, book_id, lang)

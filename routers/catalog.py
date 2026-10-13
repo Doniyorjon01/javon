@@ -14,6 +14,9 @@ POST /tenants/{tenant_id}/catalog/books         add a book that is not in the ca
                                                 same ISBN-less book exists, use that one.
                                                 409 pending_books_limit: too many books
                                                 are waiting for moderation
+PUT  /tenants/{tenant_id}/catalog/books/{id}/cover
+                                                multipart "file": the cover of a book this
+                                                store submitted, while it is still pending
 GET  /tenants/{tenant_id}/catalog/submissions?status=...
                                                 books this store added and what became of
                                                 them; rejected ones carry review_note
@@ -21,16 +24,19 @@ GET  /tenants/{tenant_id}/catalog/submissions?status=...
 Any member of the store (owner or staff) may do all of this.
 """
 
-from fastapi import APIRouter, Depends, Path, Query, Security, status
+from fastapi import APIRouter, Depends, File, Path, Query, Security, UploadFile, status
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.oauth2 import CurrentMember, get_current_member
+from config import settings
 from database import db_catalog
 from database.config import get_pg_db
 from models.catalog import Book, BookStatus
 from schemas.base import BIGINT_MAX
 from schemas.catalog import BookCreate, BookOut
+from services.media import read_upload
+from services.storage import Storage, get_storage
 from utils.i18n import Lang, get_lang
 from utils.pagination import CustomPage
 
@@ -84,3 +90,16 @@ async def get_submissions(
     db: AsyncSession = Depends(get_pg_db),
 ) -> object:
     return await apaginate(db, db_catalog.get_submissions(member.tenant_id, book_status))
+
+
+@router.put("/books/{book_id}/cover", response_model=BookOut)
+async def upload_cover(
+    file: UploadFile = File(description="JPEG, PNG or WebP"),
+    book_id: int = Path(gt=0, le=BIGINT_MAX),
+    member: CurrentMember = Security(get_current_member),
+    db: AsyncSession = Depends(get_pg_db),
+    storage: Storage = Depends(get_storage),
+    lang: Lang = Depends(get_lang),
+) -> Book:
+    data = await read_upload(file, settings.MAX_UPLOAD_BYTES, lang)
+    return await db_catalog.set_cover(db, storage, book_id, data, lang, tenant_id=member.tenant_id)

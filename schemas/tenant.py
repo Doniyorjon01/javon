@@ -3,9 +3,9 @@ Tenant (store) schemas
 ======================
 TenantCreate   wizard step "Do'kon nomi": name + slug. Status, plan and trial
                dates are set by the server, never by the client.
-TenantUpdate   wizard steps "Ko'rinish" and "Ma'lumotlar". extra="forbid": a
-               request that tries to send status/plan/slug fails with 422
-               instead of being silently ignored.
+TenantUpdate   wizard steps "Ko'rinish", "Ma'lumotlar" and "Yetkazish va to'lov".
+               extra="forbid": a request that tries to send status/plan/slug
+               fails with 422 instead of being silently ignored.
 StorefrontOut  what any visitor of the store may see.
 TenantOut      what the store's owner sees in the admin panel.
 """
@@ -22,13 +22,17 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    computed_field,
     field_validator,
     model_validator,
 )
 
+from models.inventory import MAX_PRICE
 from models.tenant import Plan, TenantStatus
 from schemas.base import ORMModel
+from services.media import image_urls
 from utils.i18n import Lang
+from utils.images import LOGO_SPEC
 from utils.slug import SLUG_MAX_LENGTH, SLUG_MIN_LENGTH, SLUG_PATTERN
 
 _PHONE_SEPARATORS = re.compile(r"[\s\-()]")
@@ -60,6 +64,9 @@ Slug = Annotated[
 ]
 StoreName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=80)]
 Address = Annotated[str, StringConstraints(max_length=255)]
+DeliveryArea = Annotated[str, StringConstraints(max_length=300)]
+Money = Annotated[int, Field(ge=0, le=MAX_PRICE)]  # tiyin
+PositiveMoney = Annotated[int, Field(gt=0, le=MAX_PRICE)]
 HexColor = Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$")]
 ThemeKey = Annotated[str, StringConstraints(pattern=r"^[a-z0-9-]{1,32}$")]
 TelegramUsername = Annotated[
@@ -119,12 +126,26 @@ class TenantUpdate(BaseModel):
     instagram_username: Annotated[InstagramUsername | None, BeforeValidator(_empty_to_none)] = None
     languages: list[Lang] | None = Field(default=None, min_length=1)
 
+    # Delivery (money in tiyin). At least one of pickup / delivery stays on.
+    pickup_enabled: bool | None = None
+    delivery_enabled: bool | None = None
+    delivery_fee: Money | None = None
+    free_delivery_from: PositiveMoney | None = None  # order subtotal; None: delivery is never free
+    delivery_area: Annotated[DeliveryArea | None, BeforeValidator(_empty_to_none)] = None
+
     @field_validator("languages")
     @classmethod
     def _unique_languages(cls, value: list[Lang] | None) -> list[Lang] | None:
         if value is not None and len(set(value)) != len(value):
             raise ValueError("languages must not repeat")
         return value
+
+    @model_validator(mode="after")
+    def _not_null(self) -> Self:
+        for name in ("pickup_enabled", "delivery_enabled", "delivery_fee"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be empty")
+        return self
 
     @model_validator(mode="after")
     def _location_pair(self) -> Self:
@@ -141,6 +162,7 @@ class StorefrontOut(ORMModel):
     name: str
     theme: str
     accent_color: str
+    logo_key: str | None = Field(default=None, exclude=True)
     phone: str | None
     address: str | None
     latitude: float | None
@@ -149,6 +171,17 @@ class StorefrontOut(ORMModel):
     telegram_username: str | None
     instagram_username: str | None
     languages: list[Lang]
+    pickup_enabled: bool
+    delivery_enabled: bool
+    delivery_fee: int
+    free_delivery_from: int | None
+    delivery_area: str | None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def logo(self) -> dict[str, str] | None:
+        """{"s": url, "l": url} — 128 and 512 px WebP; None without a logo."""
+        return image_urls(self.logo_key, LOGO_SPEC)
 
 
 class TenantOut(StorefrontOut):

@@ -1,7 +1,7 @@
 """
 Middlewares
 ===========
-RequestContextMiddleware and BodySizeLimitMiddleware (bottom of the file).
+RequestContextMiddleware, BodySizeLimitMiddleware and StorefrontCORSMiddleware.
 
 Pure ASGI (not BaseHTTPMiddleware, which breaks contextvars and streaming).
 
@@ -112,16 +112,31 @@ class BodySizeLimitMiddleware:
       * no Content-Length (chunked) -> bytes are counted as they arrive and the
         read is stopped at the limit.
 
-    Routes that accept files will get their own, larger limit (step 5).
+    Paths matching `upload_paths` (logo, cover and Excel uploads) get the larger
+    `upload_max_bytes` instead; everything else is JSON and stays small.
     """
 
-    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        max_bytes: int,
+        upload_max_bytes: int | None = None,
+        upload_paths: re.Pattern[str] | None = None,
+    ) -> None:
         self.app = app
         self.max_bytes = max_bytes
+        self.upload_max_bytes = upload_max_bytes or max_bytes
+        self.upload_paths = upload_paths
 
-    def _detail(self, headers: Headers) -> dict[str, str]:
+    def _limit_for(self, path: str) -> int:
+        if self.upload_paths is not None and self.upload_paths.match(path):
+            return self.upload_max_bytes
+        return self.max_bytes
+
+    @staticmethod
+    def _detail(headers: Headers, limit: int) -> dict[str, str]:
         lang = parse_accept_language(headers.get("accept-language"))
-        message = translate(Msg.PAYLOAD_TOO_LARGE, lang).format(self.max_bytes // 1024)
+        message = translate(Msg.PAYLOAD_TOO_LARGE, lang).format(limit // 1024)
         return {"code": Msg.PAYLOAD_TOO_LARGE.value, "message": message}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -130,9 +145,10 @@ class BodySizeLimitMiddleware:
             return
 
         headers = Headers(scope=scope)
+        limit = self._limit_for(scope["path"])
         declared = headers.get("content-length", "")
-        if declared.isdigit() and int(declared) > self.max_bytes:
-            response = JSONResponse(status_code=413, content={"detail": self._detail(headers)})
+        if declared.isdigit() and int(declared) > limit:
+            response = JSONResponse(status_code=413, content={"detail": self._detail(headers, limit)})
             await response(scope, receive, send)
             return
 
@@ -143,10 +159,76 @@ class BodySizeLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.max_bytes:
+                if received > limit:
                     # An HTTPException, so FastAPI's body reader re-raises it as is and
                     # our exception handler returns it in the standard shape.
-                    raise StarletteHTTPException(status_code=413, detail=self._detail(headers))
+                    raise StarletteHTTPException(status_code=413, detail=self._detail(headers, limit))
             return message
 
         await self.app(scope, limited_receive, send)
+
+
+class StorefrontCORSMiddleware:
+    """
+    CORS for the PUBLIC storefront API, called from store subdomains
+    (varaq.javon.uz) straight from the buyer's browser.
+
+    Deliberately separate from the main CORSMiddleware: store subdomains get
+    read access and checkout on /storefront/* only, and NEVER credentials (no
+    cookie-authenticated requests), whatever the inner layers added.
+    Origins listed in CORS_ORIGINS (our own frontend) are left to the main one.
+    """
+
+    ALLOW_METHODS = "GET, POST"
+    ALLOW_HEADERS = "Content-Type, Accept-Language"
+    EXPOSE_HEADERS = "X-Request-ID, Retry-After"
+
+    def __init__(self, app: ASGIApp, origin_regex: str, trusted_origins: list[str]) -> None:
+        self.app = app
+        self.pattern = re.compile(origin_regex)
+        self.trusted = frozenset(trusted_origins)
+
+    def _handles(self, scope: Scope, origin: str | None) -> bool:
+        return (
+            scope["path"].startswith("/storefront/")
+            and origin is not None
+            and origin not in self.trusted
+            and self.pattern.fullmatch(origin) is not None
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = Headers(scope=scope)
+        origin = headers.get("origin")
+        if not self._handles(scope, origin):
+            await self.app(scope, receive, send)
+            return
+
+        if scope["method"] == "OPTIONS" and "access-control-request-method" in headers:
+            preflight = JSONResponse(
+                {},
+                headers={
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Methods": self.ALLOW_METHODS,
+                    "Access-Control-Allow-Headers": self.ALLOW_HEADERS,
+                    "Access-Control-Max-Age": "600",
+                    "Vary": "Origin",
+                },
+            )
+            await preflight(scope, receive, send)
+            return
+
+        async def send_with_cors(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                response_headers = MutableHeaders(scope=message)
+                for name in ("access-control-allow-credentials", "access-control-allow-origin"):
+                    if name in response_headers:
+                        del response_headers[name]
+                response_headers["Access-Control-Allow-Origin"] = origin
+                response_headers["Access-Control-Expose-Headers"] = self.EXPOSE_HEADERS
+                response_headers.add_vary_header("Origin")
+            await send(message)
+
+        await self.app(scope, receive, send_with_cors)

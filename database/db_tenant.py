@@ -15,11 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database.integrity import constraint_name
 from errors import generate_error
+from models.inventory import InventoryItem
 from models.tenant import MemberRole, Membership, Plan, Tenant, TenantStatus
 from models.user import User
 from schemas.tenant import SlugCheckOut, TenantCreate, TenantUpdate
+from services.media import delete_image, save_image
+from services.storage import Storage
 from translations import Msg
 from utils.i18n import DEFAULT_LANG, Lang
+from utils.images import LOGO_SPEC
 from utils.slug import slug_candidates, slug_problem, slugify
 
 SLUG_UNIQUE_CONSTRAINT = "uq_tenants_slug"
@@ -159,18 +163,67 @@ async def update_tenant(db: AsyncSession, pk: int, data: TenantUpdate, lang: Lan
     if (tenant.latitude is None) != (tenant.longitude is None):
         await db.rollback()
         raise generate_error(Msg.LOCATION_INCOMPLETE, lang)
+    if not (tenant.pickup_enabled or tenant.delivery_enabled):
+        await db.rollback()
+        raise generate_error(Msg.FULFILMENT_REQUIRED, lang)
     await db.commit()
     await db.refresh(tenant)
     return tenant
 
 
 async def launch_tenant(db: AsyncSession, pk: int, lang: Lang = DEFAULT_LANG) -> Tenant:
-    """Make the storefront public. Calling it again changes nothing (the first
-    launch date is kept). A suspended store never reaches here: writes to it are
+    """Make the storefront public. Needs at least one book on sale (an empty shop
+    is not worth opening). Calling it again changes nothing (the first launch
+    date is kept). A suspended store never reaches here: writes to it are
     refused in get_current_member."""
     tenant = await get_tenant(db, pk, lang)
     if tenant.launched_at is None:
+        on_sale = await db.scalar(
+            select(InventoryItem.id)
+            .where(
+                InventoryItem.tenant_id == pk,
+                InventoryItem.is_active.is_(True),
+                InventoryItem.is_visible.is_(True),
+            )
+            .limit(1)
+        )
+        if on_sale is None:
+            raise generate_error(Msg.LAUNCH_NEEDS_BOOKS, lang, status.HTTP_409_CONFLICT)
         tenant.launched_at = func.now()
         await db.commit()
         await db.refresh(tenant)
+    return tenant
+
+
+# --------------------------------------------------------------------------- #
+# Logo
+# --------------------------------------------------------------------------- #
+async def set_logo(
+    db: AsyncSession, storage: Storage, pk: int, data: bytes, lang: Lang = DEFAULT_LANG
+) -> Tenant:
+    await get_tenant(db, pk, lang)
+    await db.rollback()  # do not hold the transaction open during the upload
+    new_key = await save_image(storage, f"logos/{pk}", data, LOGO_SPEC, lang)
+    tenant = await db.get(Tenant, pk, with_for_update=True, populate_existing=True)
+    if tenant is None:  # pragma: no cover — stores are never deleted
+        await delete_image(storage, new_key, LOGO_SPEC)
+        raise generate_error(Msg.STORE_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND)
+    old_key, tenant.logo_key = tenant.logo_key, new_key
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        await delete_image(storage, new_key, LOGO_SPEC)
+        raise
+    await delete_image(storage, old_key, LOGO_SPEC)
+    await db.refresh(tenant)
+    return tenant
+
+
+async def delete_logo(db: AsyncSession, storage: Storage, pk: int, lang: Lang = DEFAULT_LANG) -> Tenant:
+    tenant = await get_tenant(db, pk, lang)
+    old_key, tenant.logo_key = tenant.logo_key, None
+    await db.commit()
+    await delete_image(storage, old_key, LOGO_SPEC)
+    await db.refresh(tenant)
     return tenant
