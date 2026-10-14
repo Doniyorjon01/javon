@@ -23,6 +23,7 @@ from models.user import User, UserSession
 from schemas.user import MyStoreOut, UserAdminUpdate
 from translations import Msg
 from utils.i18n import DEFAULT_LANG, Lang
+from utils.plans import access_state
 
 # last_seen_at is refreshed at most this often, so a busy admin panel does not
 # turn every read request into a write.
@@ -125,6 +126,8 @@ async def get_user_stores(db: AsyncSession, user_id: int) -> list[MyStoreOut]:
             Tenant.status,
             Membership.role,
             Tenant.launched_at,
+            Tenant.trial_ends_at,
+            Tenant.paid_until,
         )
         .join(Tenant, Tenant.id == Membership.tenant_id)
         .where(
@@ -134,7 +137,19 @@ async def get_user_stores(db: AsyncSession, user_id: int) -> list[MyStoreOut]:
         )
         .order_by(Tenant.name, Tenant.id)
     )
-    return [MyStoreOut.model_validate(row, from_attributes=True) for row in rows]
+    now = datetime.now(UTC)
+    return [
+        MyStoreOut(
+            tenant_id=row.tenant_id,
+            slug=row.slug,
+            name=row.name,
+            status=row.status,
+            role=row.role,
+            launched_at=row.launched_at,
+            access=access_state(row.status, row.trial_ends_at, row.paid_until, now),
+        )
+        for row in rows
+    ]
 
 
 # ------------------------------------------------------------ platform admin

@@ -19,6 +19,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 DEV_SECRET_KEY = "dev-only-secret-change-me-in-production"  # noqa: S105 — refused in production
 
 
+class SettingsError(RuntimeError):
+    """
+    A setting is wrong. Not a ValueError on purpose: pydantic would wrap that and
+    print the input values (DATABASE_URL with its password, keys) in the error.
+    """
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -46,6 +53,24 @@ class Settings(BaseSettings):
 
     # Free trial for a new store, in days.
     TRIAL_DAYS: int = 14
+    # After the trial or the paid period ends the store keeps working this many days
+    # (with a warning); then its storefront is hidden and its admin panel is
+    # read-only until the platform records a payment (utils/plans.py).
+    SUBSCRIPTION_GRACE_DAYS: int = 3
+
+    # --- links ------------------------------------------------------------------
+    # The platform site (Next.js): invite links, the owner's admin panel.
+    APP_URL: str = "https://javon.uz"
+    # A store's public site ({slug} is replaced). QR codes and labels point here.
+    STOREFRONT_URL_TEMPLATE: str = "https://{slug}.javon.uz/"
+
+    # --- platform subscription payments ----------------------------------------------
+    # Owners pay the platform by card transfer; the platform admin records the
+    # payment by hand (POST /system/tenants/{id}/subscription/payments).
+    PLATFORM_CARD_NUMBER: str | None = None
+    PLATFORM_CARD_HOLDER: str | None = None
+    # Who owners write to about payments, e.g. "javon_support" (no @).
+    PLATFORM_SUPPORT_TELEGRAM: str | None = None
 
     # Largest request body the API reads (JSON). File uploads get their own limit.
     MAX_REQUEST_BODY_BYTES: int = 1_048_576
@@ -76,6 +101,8 @@ class Settings(BaseSettings):
     # Orders one IP may place in one store per window (spam guard; buyers have no account).
     ORDER_RATE_LIMIT: int = 10
     ORDER_RATE_WINDOW_S: int = 600
+    # Receipt uploads per IP per ORDER_RATE_WINDOW_S (each is an image conversion).
+    PROOF_RATE_LIMIT: int = 20
     # A card-transfer order with no receipt after this many hours is cancelled and
     # its books go back on the shelf (they were reserved for the buyer meanwhile).
     CARD_TRANSFER_HOLD_HOURS: int = 24
@@ -122,6 +149,24 @@ class Settings(BaseSettings):
     TELEGRAM_LOGIN_BOT_TOKEN: SecretStr | None = None
     # A widget payload older than this is refused (limits replay of a leaked payload).
     TELEGRAM_AUTH_MAX_AGE_S: int = 86_400
+    # The platform bot's username (no @): the Login Widget, "share your phone" link,
+    # and reminders to owners come from this bot (services/platform_bot.py).
+    PLATFORM_BOT_USERNAME: str | None = None
+    # Sign-in attempts per IP per window (brute force and abuse guard).
+    AUTH_RATE_LIMIT: int = 20
+    AUTH_RATE_WINDOW_S: int = 600
+
+    # --- monitoring ------------------------------------------------------------------
+    # Sentry (or GlitchTip, its self-hosted twin). Empty = off. Nothing personal is
+    # sent: no request bodies, cookies, headers, query strings or local variables
+    # (utils/sentry.py).
+    SENTRY_DSN: SecretStr | None = None
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.0
+
+    # --- clean-up (worker, hourly) ----------------------------------------------------
+    # Finished jobs, expired sessions and invites are deleted after this many days;
+    # an Excel import's file is dropped (its report is kept).
+    CLEANUP_AFTER_DAYS: int = 30
 
     SESSION_COOKIE_NAME: str = "javon_session"
     SESSION_TTL_DAYS: int = 30
@@ -137,6 +182,11 @@ class Settings(BaseSettings):
         "STORAGE_ACCESS_KEY",
         "STORAGE_SECRET_KEY",
         "BOT_TOKEN_KEYS",
+        "SENTRY_DSN",
+        "PLATFORM_CARD_NUMBER",
+        "PLATFORM_CARD_HOLDER",
+        "PLATFORM_SUPPORT_TELEGRAM",
+        "PLATFORM_BOT_USERNAME",
         mode="before",
     )
     @classmethod
@@ -156,23 +206,44 @@ class Settings(BaseSettings):
         return v
 
     @model_validator(mode="after")
+    def _check_bot_token_keys(self) -> Self:
+        # Fail at start-up with a clear message, not on the first bot connect (500).
+        # A model validator raising SettingsError: a field validator's ValueError
+        # would print the raw input (the key) in the error.
+        if self.BOT_TOKEN_KEYS is None:
+            return self
+        from cryptography.fernet import Fernet
+
+        raw = self.BOT_TOKEN_KEYS.get_secret_value()
+        try:
+            for key in (key.strip() for key in raw.split(",")):
+                if key:
+                    Fernet(key)
+        except ValueError:
+            raise SettingsError(
+                "BOT_TOKEN_KEYS must be Fernet keys (44 characters, comma-separated); make one with: "
+                'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+            ) from None
+        return self
+
+    @model_validator(mode="after")
     def _check_production(self) -> Self:
         if self.ENV == "production":
             if self.DEBUG:
-                raise ValueError("DEBUG must be false in production")
+                raise SettingsError("DEBUG must be false in production")
             if "*" in self.CORS_ORIGINS:
-                raise ValueError("CORS_ORIGINS must list exact origins in production")
+                raise SettingsError("CORS_ORIGINS must list exact origins in production")
             if not self.SESSION_COOKIE_SECURE:
-                raise ValueError("SESSION_COOKIE_SECURE must be true in production")
+                raise SettingsError("SESSION_COOKIE_SECURE must be true in production")
             if self.TELEGRAM_LOGIN_BOT_TOKEN is None:
-                raise ValueError("TELEGRAM_LOGIN_BOT_TOKEN is required in production")
+                raise SettingsError("TELEGRAM_LOGIN_BOT_TOKEN is required in production")
             if self.BOT_TOKEN_KEYS is None:
-                raise ValueError("BOT_TOKEN_KEYS is required in production")
+                raise SettingsError("BOT_TOKEN_KEYS is required in production")
             if self.TELEGRAM_MODE != "webhook" or not self.PUBLIC_API_URL.startswith("https://"):
-                raise ValueError("production needs TELEGRAM_MODE=webhook and an https PUBLIC_API_URL")
+                raise SettingsError("production needs TELEGRAM_MODE=webhook and an https PUBLIC_API_URL")
             secret = self.SECRET_KEY.get_secret_value()
             if len(secret) < 32 or secret == DEV_SECRET_KEY:
-                raise ValueError("SECRET_KEY must be set to 32+ random characters in production")
+                raise SettingsError("SECRET_KEY must be set to 32+ random characters in production")
         return self
 
     @property

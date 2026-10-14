@@ -30,6 +30,9 @@ class JobKind(StrEnum):
     ORDER_STATUS_CHANGED = "order_status_changed"
     PAYMENT_PROOF_RECEIVED = "payment_proof_received"
     PAYMENT_REVIEWED = "payment_reviewed"
+    # A Telegram message from the platform bot to the store's owner:
+    # payload {"notice": "ends_soon" | "grace" | "closed" | "paid" | "suspended"}.
+    OWNER_NOTICE = "owner_notice"
 
 
 def enqueue(

@@ -52,6 +52,27 @@ os.environ["STORAGE_ACCESS_KEY"] = ""
 os.environ["STORAGE_SECRET_KEY"] = ""
 os.environ["STORAGE_PUBLIC_URL"] = "http://media.test/javon-media"
 os.environ["CORS_ORIGIN_REGEX"] = ""
+# Store bots: the built-in dev encryption key and the defaults the tests expect,
+# whatever .env says (a key or webhook settings there must not break the tests).
+os.environ["BOT_TOKEN_KEYS"] = ""
+os.environ["TELEGRAM_MODE"] = "polling"
+os.environ["PUBLIC_API_URL"] = "http://localhost:8010"
+os.environ["TELEGRAM_API_URL"] = "https://api.telegram.org"
+os.environ["MINI_APP_URL_TEMPLATE"] = "https://{slug}.javon.uz/"
+os.environ["ADMIN_PANEL_URL"] = "https://javon.uz/admin"
+os.environ["TELEGRAM_ORDER_CONTACTS"] = "false"
+os.environ["STORAGE_PRIVATE_BUCKET"] = "javon-private"
+# Rate limits count per IP across the whole run (every test client is 127.0.0.1);
+# tests of the limits themselves lower them with monkeypatch and clear the key.
+os.environ["AUTH_RATE_LIMIT"] = "1000000"
+os.environ["PROOF_RATE_LIMIT"] = "1000000"
+# Links and platform payment details as the tests expect them.
+os.environ["APP_URL"] = "https://javon.uz"
+os.environ["STOREFRONT_URL_TEMPLATE"] = "https://{slug}.javon.uz/"
+os.environ["PLATFORM_CARD_NUMBER"] = "8600123412341234"
+os.environ["PLATFORM_CARD_HOLDER"] = "Javon MChJ"
+os.environ["PLATFORM_SUPPORT_TELEGRAM"] = "javon_support"
+os.environ["SENTRY_DSN"] = ""
 
 import pytest
 from asgi_lifespan import LifespanManager

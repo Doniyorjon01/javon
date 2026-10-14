@@ -29,15 +29,18 @@ models/         SQLAlchemy jadvallari. Har biri BaseModel'dan meros oladi.
 schemas/        Pydantic: XBase, XCreate, XUpdate, XOut, XOutFull.
 services/       Tashqi xizmatlar va fayllar: storage.py (S3), media.py (rasm yuklash),
                 excel.py (shablon va o'qish), telegram.py (Bot API klienti),
-                telegram_updates.py (bot xabarlariga javob), telegram_texts.py (bot matnlari).
+                telegram_updates.py (do'kon boti), platform_bot.py (platforma boti),
+                telegram_texts.py (bot matnlari), qr.py (QR, PDF yorliq va poster).
                 Routerlar SDK obyektlariga tegmaydi.
 workers/        Fon vazifalari (`jobs` jadvali): main.py sikl, har vazifa o'z sessiyasida,
                 vazifa do'koniga bog'langan (RLS).
 auth/           Kirish va rol dependency'lari.
 utils/          i18n, pagination, redis_cache, log, images, phone, signing, rate_limit, translit, isbn,
-                crypto (bot tokenlari), money (so'm formati), telegram_auth.
+                crypto (bot tokenlari), money (so'm formati), telegram_auth, plans (tariflar
+                va obuna soati), sentry (shaxsiy ma'lumotsiz).
 alembic/        Migratsiyalar.
 scripts/        Yordamchi skriptlar; postgres-init/ — Postgres rollari (faqat bo'sh volume'da).
+deploy/         Production: Caddyfile, backup-db.sh (docker-compose.prod.yml).
 tests/          pytest.
 ```
 
@@ -148,6 +151,36 @@ async def get_book(
 - Xabarlar faqat worker'dan (outbox), so'rov ichidan emas. 401 (token bekor qilingan) → bot `broken`; 400/403 → log; boshqa xato → guruh xabari qayta urinadi.
 - Bot matnlari `services/telegram_texts.TEXTS` da, uch tilda; qiymatlar HTML-escape qilinadi (`raw()` faqat o'zimiz yasagan matn uchun).
 
+## Obuna va tariflar
+
+- Tariflar `utils/plans.PLANS` da: narx (tiyin), kitoblar va xodimlar chegarasi, Excel import. Yil = 10 oy narxi. Narxlar kodda, sozlamada emas.
+- Obuna holati SAQLANMAYDI, hisoblanadi: `utils/plans.access_state(status, trial_ends_at, paid_until, now)` → `trial / active / grace / expired / suspended`. SQL'dagi egizagi `db_tenant.subscription_open()`; ikkalasi bir xil qoidada turishi shart.
+- `access_until` = `trial_ends_at` va `paid_until` ning kechrog'i. Undan keyin `SUBSCRIPTION_GRACE_DAYS` (3) kun do'kon ishlaydi (grace). Keyin `expired`: vitrina 404, admin panel faqat o'qiladi (har yozish 403 `subscription_expired`), guruh tugmalari ishlamaydi, botda "do'kon yopiq".
+- To'lovni platforma admini qo'lda yozadi (`subscription_payments`). Yangi davr joriy davr tugashidan boshlanadi (oldindan va grace kunlarida to'lagan hech narsa yo'qotmaydi va bepul ham olmaydi). Yopilib bo'lgan do'konda davr bugundan boshlanadi. `tenants.paid_until` = faol to'lovlarning eng kech `period_end`. Xato to'lov o'chirilmaydi, `void` qilinadi.
+- Sana o'zgaradigan har amalda do'kon qatori qulflanadi (`FOR UPDATE`).
+- Eslatmalar: worker har 5 daqiqada `scan_reminders`. Kalit `tenants.subscription_notice` ga yoziladi (`ends_soon:2026-11-01`), shuning uchun har eslatma bir marta ketadi. Xabarni platforma boti egaga yuboradi (`workers/subscriptions.py`).
+
+## Xodimlar
+
+- Taklif: bir martalik havola `APP_URL/taklif/<token>`, 7 kun amal qiladi. Bazada faqat SHA-256 saqlanadi. Ochiq takliflar 10 tagacha. Havolalar IP bo'yicha rate-limit.
+- Qabul qilishda qulf tartibi: avval `tenants`, keyin taklif. Tarifning xodim chegarasi parallel so'rovlarda ham oshmaydi.
+- Egani olib tashlab bo'lmaydi va u chiqib ketolmaydi. Olib tashlangan xodim keyingi so'rovdanoq 404 oladi.
+
+## QR, statistika, platforma admini
+
+- QR va PDF `services/qr.py` da (segno + reportlab, CPU ishi `asyncio.to_thread` da). Havolalar `STOREFRONT_URL_TEMPLATE` + `/kitob/<book_id>?src=qr`. Shrift DejaVu Sans (Dockerfile'da `fonts-dejavu-core`); u yo'q bo'lsa Helvetica'ga tushadi.
+- Do'kon statistikasi (`db_stats`) faqat egaga ko'rinadi. Hammasi agregat so'rovlar, kunlar Toshkent vaqti bilan.
+- Platforma admini boshqa do'konlarning buyurtma sonlarini `platform_order_totals(since)` SQL funksiyasidan oladi. U SECURITY DEFINER, faqat agregat qaytaradi, xaridor ma'lumoti chiqmaydi. RLS'ni chetlab o'tadigan boshqa yo'l yozilmaydi.
+- Platforma jadvallari (RLS yo'q, `tenant_id` bo'yicha aniq filtr): `memberships`, `jobs`, `telegram_bots`, `staff_invites`, `subscription_payments`.
+
+## Production
+
+- `docker-compose.prod.yml`: internetga faqat Caddy chiqadi (80/443). Do'kon subdomenlari uchun on-demand TLS, ruxsatni `/internal/tls-ask` beradi. `/internal/*` tashqaridan 404.
+- Uvicorn `--proxy-headers --forwarded-allow-ips=*` bilan ishlaydi: rate-limit haqiqiy IP'ni ko'radi. Bu xavfsiz, chunki 8000-port ochiq emas.
+- Zaxira: `backup-db` (kunlik `pg_dump`) va `backup-files` (bucket'lar ko'zgusi). Ikkalasi `./backups` ga yozadi.
+- Sentry faqat `SENTRY_DSN` bilan yoqiladi. Body, cookie, sarlavha, query string, user va local o'zgaruvchilar yuborilmaydi, bot tokeni niqoblanadi (`utils/sentry.py`).
+- Worker har soatda tozalaydi: eski sessiyalar, bajarilgan vazifalar, eskirgan takliflar, tugagan importlarning Excel fayli (`CLEANUP_AFTER_DAYS`).
+
 ## Kirish va rollar
 
 - Kirish Telegram Login Widget orqali: frontend widget ma'lumotini `POST /auth/telegram` ga o'zgartirmasdan yuboradi. Imzo `utils/telegram_auth.py` da tekshiriladi.
@@ -157,6 +190,8 @@ async def get_book(
 - CSRF: cookie bilan keladigan har bir POST/PUT/PATCH/DELETE so'rovining `Origin` sarlavhasi `CORS_ORIGINS` ichida bo'lishi shart.
 - `/auth/dev-login` faqat `ENV=test` yoki `ENV=local` + `DEBUG=true` da mavjud, boshqa hollarda bu yo'nalish umuman ro'yxatga olinmaydi.
 - `ENV` majburiy, standart qiymati yo'q: ENV'siz ishga tushgan server xato beradi.
+- Kirish urinishlari IP bo'yicha cheklangan (`AUTH_RATE_LIMIT` / `AUTH_RATE_WINDOW_S`, `utils/rate_limit.AUTH_LIMIT`).
+- Sozlama xatosi `SettingsError` (RuntimeError). ValueError emas: pydantic uni o'rab, kirish qiymatlarini (parol, kalit) xabarga chiqarib yuboradi.
 
 ## So'rov chegaralari
 

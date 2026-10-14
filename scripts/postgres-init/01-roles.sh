@@ -7,8 +7,14 @@
 #   javon_app    the API; no ownership, no BYPASSRLS -> RLS always applies
 #
 #   javon        the application database
-#   javon_test   the same setup for pytest; tests wipe it freely (local dev only)
+#   javon_test   the same setup for pytest; tests wipe it freely (local dev only:
+#                docker-compose.prod.yml sets JAVON_TEST_DB=false)
 set -euo pipefail
+
+databases="javon"
+if [ "${JAVON_TEST_DB:-true}" = "true" ]; then
+  databases="javon javon_test"
+fi
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
      -v owner_pw="$JAVON_OWNER_PASSWORD" \
@@ -17,7 +23,7 @@ CREATE ROLE javon_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PA
 CREATE ROLE javon_app   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD :'app_pw';
 SQL
 
-for db in javon javon_test; do
+for db in $databases; do
   psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres -v db="$db" <<'SQL'
 CREATE DATABASE :"db" OWNER javon_owner;
 \connect :"db"

@@ -11,3 +11,6 @@ tests
 .idea
 scripts/postgres-init
 requirements-dev.txt
+backups
+deploy
+.github

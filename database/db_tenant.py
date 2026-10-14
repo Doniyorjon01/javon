@@ -5,14 +5,17 @@ Platform-level table: queries here filter by slug or id explicitly, RLS does
 not apply to `tenants` or `memberships` (see models/tenant.py).
 """
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from fastapi import status
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
+from database import db_job
+from database.db_job import JobKind
 from database.integrity import constraint_name
 from errors import generate_error
 from models.inventory import InventoryItem
@@ -24,13 +27,43 @@ from services.storage import Storage
 from translations import Msg
 from utils.i18n import DEFAULT_LANG, Lang
 from utils.images import LOGO_SPEC
+from utils.plans import AccessState, access_state, grace
 from utils.slug import slug_candidates, slug_problem, slugify
 
 SLUG_UNIQUE_CONSTRAINT = "uq_tenants_slug"
 MAX_SUGGESTIONS = 3
 
-# Statuses whose storefront is visible to buyers.
+# Statuses whose storefront is visible to buyers (dates permitting).
 _PUBLIC_STATUSES = (TenantStatus.TRIAL, TenantStatus.ACTIVE)
+
+
+def storefront_visible(now: datetime) -> ColumnElement[bool]:
+    return and_(
+        Tenant.is_active.is_(True),
+        Tenant.status.in_(_PUBLIC_STATUSES),
+        Tenant.launched_at.is_not(None),
+        subscription_open(now),
+    )
+
+
+def subscription_open(now: datetime) -> ColumnElement[bool]:
+    """
+    SQL twin of utils.plans.access_state() not in CLOSED_STATES, for the dates:
+    the later of trial_ends_at / paid_until plus the grace days is still ahead
+    (no dates at all = no clock). Keep the two in step.
+    """
+    until = func.greatest(Tenant.trial_ends_at, Tenant.paid_until)
+    return or_(until.is_(None), until > now - grace())
+
+
+@dataclass(frozen=True, slots=True)
+class MemberAccess:
+    role: MemberRole
+    state: AccessState
+
+    @property
+    def read_only(self) -> bool:
+        return self.state in (AccessState.EXPIRED, AccessState.SUSPENDED)
 
 
 async def get_tenant(db: AsyncSession, pk: int, lang: Lang = DEFAULT_LANG) -> Tenant:
@@ -40,14 +73,13 @@ async def get_tenant(db: AsyncSession, pk: int, lang: Lang = DEFAULT_LANG) -> Te
     return tenant
 
 
-async def get_membership(
-    db: AsyncSession, user_id: int, tenant_id: int
-) -> tuple[MemberRole, TenantStatus] | None:
-    """(role, store status) if the user works in this store, else None.
-    Suspended stores are included: their owners still sign in to pay or export data."""
+async def get_membership(db: AsyncSession, user_id: int, tenant_id: int) -> MemberAccess | None:
+    """The user's role and the store's subscription state, or None if they do not
+    work there. Suspended and expired stores are included: their owners still sign
+    in to see their data and pay."""
     row = (
         await db.execute(
-            select(Membership.role, Tenant.status)
+            select(Membership.role, Tenant.status, Tenant.trial_ends_at, Tenant.paid_until)
             .join(Tenant, Tenant.id == Membership.tenant_id)
             .where(
                 Membership.user_id == user_id,
@@ -57,7 +89,12 @@ async def get_membership(
             )
         )
     ).first()
-    return (row.role, row.status) if row else None
+    if row is None:
+        return None
+    return MemberAccess(
+        role=row.role,
+        state=access_state(row.status, row.trial_ends_at, row.paid_until, datetime.now(UTC)),
+    )
 
 
 async def get_active_tenant_ids(db: AsyncSession) -> list[int]:
@@ -66,16 +103,9 @@ async def get_active_tenant_ids(db: AsyncSession) -> list[int]:
 
 
 async def get_storefront_tenant(db: AsyncSession, slug: str, lang: Lang = DEFAULT_LANG) -> Tenant:
-    """The store a buyer is looking at. Stores that are not launched yet, suspended
-    or deleted look exactly like missing ones."""
-    tenant = await db.scalar(
-        select(Tenant).where(
-            Tenant.slug == slug,
-            Tenant.is_active.is_(True),
-            Tenant.status.in_(_PUBLIC_STATUSES),
-            Tenant.launched_at.is_not(None),
-        )
-    )
+    """The store a buyer is looking at. Stores that are not launched yet, suspended,
+    expired (unpaid past the grace days) or deleted look exactly like missing ones."""
+    tenant = await db.scalar(select(Tenant).where(Tenant.slug == slug, storefront_visible(datetime.now(UTC))))
     if tenant is None:
         raise generate_error(Msg.STORE_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND)
     return tenant
@@ -236,5 +266,36 @@ async def delete_logo(db: AsyncSession, storage: Storage, pk: int, lang: Lang = 
     old_key, tenant.logo_key = tenant.logo_key, None
     await db.commit()
     await delete_image(storage, old_key, LOGO_SPEC)
+    await db.refresh(tenant)
+    return tenant
+
+
+# --------------------------------------------------------------------------- #
+# Platform admin: suspend and reactivate
+# --------------------------------------------------------------------------- #
+async def set_suspended(
+    db: AsyncSession, pk: int, reason: str | None, lang: Lang = DEFAULT_LANG, *, notify: bool = False
+) -> Tenant:
+    """reason given: suspend (storefront hidden, admin read-only); None: reactivate.
+    Reactivation returns the store to "active" if it ever paid, else to "trial"
+    (its dates decide whether it is actually open). notify: tell the owner in
+    Telegram (the job is committed with the change)."""
+    tenant = await db.scalar(
+        select(Tenant)
+        .where(Tenant.id == pk, Tenant.is_active.is_(True))
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if tenant is None:
+        await db.rollback()
+        raise generate_error(Msg.STORE_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND)
+    if reason is not None:
+        tenant.status, tenant.suspended_reason = TenantStatus.SUSPENDED, reason
+        if notify:
+            db_job.enqueue(db, JobKind.OWNER_NOTICE, pk, {"notice": "suspended"})
+    else:
+        tenant.status = TenantStatus.ACTIVE if tenant.paid_until else TenantStatus.TRIAL
+        tenant.suspended_reason = None
+    await db.commit()
     await db.refresh(tenant)
     return tenant

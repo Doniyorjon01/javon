@@ -16,3 +16,8 @@ defusedxml==0.7.1
 cryptography==50.0.2
 # Telegram Bot API client (services/telegram.py)
 httpx==0.28.1
+# QR codes and printable labels (services/qr.py)
+segno==1.6.6
+reportlab==5.0.1
+# Error tracking, off unless SENTRY_DSN is set (utils/sentry.py)
+sentry-sdk==2.72.0

@@ -1,0 +1,85 @@
+# Every push and pull request: lint, the full test suite against real
+# PostgreSQL 16 and Redis, the migrations against the models, and a Docker build.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://javon_app:app_ci@localhost:5432/javon_test
+      TEST_MIGRATION_DATABASE_URL: postgresql+asyncpg://javon_owner:owner_ci@localhost:5432/javon_test
+      TEST_REDIS_URL: redis://localhost:6379/15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Fonts for PDF labels
+        run: sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+
+      - name: Database roles (the same script as docker-compose)
+        env:
+          PGHOST: localhost
+          PGPASSWORD: postgres
+          POSTGRES_USER: postgres
+          JAVON_OWNER_PASSWORD: owner_ci
+          JAVON_APP_PASSWORD: app_ci
+        run: bash scripts/postgres-init/01-roles.sh
+
+      - name: Install
+        run: pip install -r requirements-dev.txt
+
+      - name: Ruff
+        run: ruff check . && ruff format --check .
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Migrations match the models
+        env:
+          ENV: test
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+          MIGRATION_DATABASE_URL: ${{ env.TEST_MIGRATION_DATABASE_URL }}
+        run: alembic upgrade head && alembic check
+
+  docker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build --tag javon-backend:ci .
+      - name: The image starts and imports the app
+        run: >-
+          docker run --rm -e ENV=test
+          -e DATABASE_URL=postgresql+asyncpg://x:y@localhost/javon_test
+          javon-backend:ci python -c "import main, workers.main; print('ok')"

@@ -26,6 +26,8 @@ from models.order import (
     PaymentMethod,
     PaymentStatus,
 )
+from models.staff import StaffInvite
+from models.subscription import SubscriptionPayment
 from models.telegram import BotStatus, TelegramBot
 from models.tenant import MemberRole, Membership, Plan, Tenant, TenantStatus
 from models.user import User, UserSession
@@ -58,6 +60,8 @@ __all__ = [
     "PaymentStatus",
     "Plan",
     "Publisher",
+    "StaffInvite",
+    "SubscriptionPayment",
     "TelegramBot",
     "Tenant",
     "TenantStatus",

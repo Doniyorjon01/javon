@@ -3,8 +3,9 @@ Background worker
 =================
     python -m workers.main          (the `worker` service in docker-compose.yml)
 
-Runs jobs from the `jobs` table (models/job.py): Excel imports now, Telegram
-notifications later. WORKER_CONCURRENCY lanes each take one job at a time;
+Runs jobs from the `jobs` table (models/job.py): Excel imports, Telegram
+notifications to stores and owners; plus periodic work (unpaid card orders,
+subscription reminders, hourly clean-up). WORKER_CONCURRENCY lanes each take one job at a time;
 several worker processes may run side by side (SKIP LOCKED keeps them apart).
 
 Each job runs in its own session, bound to the job's store, so Row Level
@@ -13,6 +14,9 @@ exponential backoff (database/db_job.py) and marked failed after max_attempts;
 the error text is kept in jobs.last_error and the traceback goes to the log.
 
 SIGTERM (docker stop) lets running jobs finish, then exits.
+
+Liveness: a heartbeat file proves the loop runs and the database answers
+(workers/healthcheck.py, the container healthcheck).
 """
 
 import asyncio
@@ -21,6 +25,7 @@ import logging
 import signal
 from collections.abc import Awaitable, Callable
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -30,7 +35,9 @@ from database.db_job import JobKind
 from middleware import request_id_var
 from models.job import Job
 from utils.log import configure_logging
-from workers import inventory_import, notifications
+from utils.sentry import init_sentry
+from workers import inventory_import, notifications, subscriptions
+from workers.healthcheck import HEARTBEAT_FILE, HEARTBEAT_INTERVAL_S
 
 logger = logging.getLogger("javon.worker")
 
@@ -42,10 +49,12 @@ HANDLERS: dict[str, Handler] = {
     JobKind.ORDER_STATUS_CHANGED: notifications.order_status_changed,
     JobKind.PAYMENT_PROOF_RECEIVED: notifications.payment_proof_received,
     JobKind.PAYMENT_REVIEWED: notifications.payment_reviewed,
+    JobKind.OWNER_NOTICE: subscriptions.owner_notice,
 }
 
 STALE_CHECK_INTERVAL_S = 60.0
 PERIODIC_INTERVAL_S = 300.0
+CLEANUP_INTERVAL_S = 3600.0
 
 
 class UnknownJobKindError(Exception):
@@ -119,8 +128,44 @@ async def _reaper(stop: asyncio.Event) -> None:
         await _sleep_or_stop(stop, STALE_CHECK_INTERVAL_S)
 
 
-async def run_periodic_tasks() -> None:
-    """Every PERIODIC_INTERVAL_S: work that no request triggers. Per store, under RLS."""
+async def beat() -> None:
+    """Touch the heartbeat file if the database answers; raises otherwise."""
+    async with SessionLocal() as db:
+        await asyncio.wait_for(db.execute(text("SELECT 1")), timeout=HEARTBEAT_INTERVAL_S)
+    await asyncio.to_thread(HEARTBEAT_FILE.touch)
+
+
+async def _heartbeat(stop: asyncio.Event) -> None:
+    while not stop.is_set():
+        try:
+            await beat()
+        except Exception:  # no beat: the healthcheck turns unhealthy after a few of these
+            logger.exception("Heartbeat failed")
+        await _sleep_or_stop(stop, HEARTBEAT_INTERVAL_S)
+
+
+async def run_periodic_tasks(*, cleanup: bool = False) -> None:
+    """
+    Every PERIODIC_INTERVAL_S: work that no request triggers. Subscription
+    reminders over all stores (platform table), then per store under RLS:
+    unpaid card orders; with `cleanup` (hourly) also old import files, and the
+    platform tables' clean-up.
+    """
+    try:
+        async with SessionLocal() as db:
+            queued = await subscriptions.scan_reminders(db)
+        if queued:
+            logger.info("Subscription reminders queued", extra={"count": queued})
+    except Exception:
+        logger.exception("Subscription reminder scan failed")
+    if cleanup:
+        try:
+            async with SessionLocal() as db:
+                removed = await subscriptions.cleanup(db)
+            logger.info("Clean-up done", extra=removed)
+        except Exception:
+            logger.exception("Clean-up failed")
+
     async with SessionLocal() as db:
         tenant_ids = await db_tenant.get_active_tenant_ids(db)
     for tenant_id in tenant_ids:
@@ -128,14 +173,21 @@ async def run_periodic_tasks() -> None:
             async with SessionLocal() as db:
                 await bind_tenant(db, tenant_id)
                 await db_order.cancel_unpaid_card_orders(db, tenant_id)
+                if cleanup:
+                    await subscriptions.cleanup_store(db, tenant_id)
         except Exception:
             logger.exception("Periodic task failed", extra={"tenant_id": tenant_id})
 
 
 async def _periodic(stop: asyncio.Event) -> None:
+    loop = asyncio.get_running_loop()
+    last_cleanup = -CLEANUP_INTERVAL_S
     while not stop.is_set():
+        cleanup = loop.time() - last_cleanup >= CLEANUP_INTERVAL_S
+        if cleanup:
+            last_cleanup = loop.time()
         try:
-            await run_periodic_tasks()
+            await run_periodic_tasks(cleanup=cleanup)
         except Exception:
             logger.exception("Periodic tasks failed")
         await _sleep_or_stop(stop, PERIODIC_INTERVAL_S)
@@ -143,7 +195,11 @@ async def _periodic(stop: asyncio.Event) -> None:
 
 async def serve(stop: asyncio.Event) -> None:
     lanes = [asyncio.create_task(_lane(stop)) for _ in range(settings.WORKER_CONCURRENCY)]
-    others = [asyncio.create_task(_reaper(stop)), asyncio.create_task(_periodic(stop))]
+    others = [
+        asyncio.create_task(_reaper(stop)),
+        asyncio.create_task(_periodic(stop)),
+        asyncio.create_task(_heartbeat(stop)),
+    ]
     logger.info("Worker started", extra={"lanes": len(lanes)})
     await asyncio.gather(*lanes, *others)
     await notifications.get_client().aclose()
@@ -153,6 +209,9 @@ async def serve(stop: asyncio.Event) -> None:
 
 def main() -> None:
     configure_logging(settings.LOG_LEVEL)
+    init_sentry("worker")
+    # A restarted container keeps its /tmp: never report healthy on the last run's beat.
+    HEARTBEAT_FILE.unlink(missing_ok=True)
 
     async def _run() -> None:
         stop = asyncio.Event()

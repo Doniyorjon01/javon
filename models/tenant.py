@@ -88,6 +88,14 @@ class Tenant(BaseModel):
     )
     plan: Mapped[Plan] = mapped_column(str_enum(Plan), server_default=Plan.STANDARD.value)
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # End of the last paid period: the latest period_end of the store's active
+    # subscription_payments (database/db_subscription.py keeps them in step).
+    paid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Why the platform suspended the store; shown to the owner.
+    suspended_reason: Mapped[str | None] = mapped_column(String(300))
+    # The last subscription reminder sent to the owner ("ends_soon:2026-11-01"), so
+    # the worker sends each one once (workers/subscriptions.py).
+    subscription_notice: Mapped[str | None] = mapped_column(String(40))
     # NULL until the owner presses "launch" at the end of the setup wizard; the
     # storefront is public only after that (db_tenant.get_storefront_tenant).
     launched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

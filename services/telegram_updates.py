@@ -28,6 +28,7 @@ handling at-most-once with a Redis key per update.
 import contextlib
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -50,6 +51,7 @@ from services.telegram_texts import pick_lang, text
 from utils.i18n import Lang
 from utils.images import RECEIPT_SPEC
 from utils.money import format_som
+from utils.plans import CLOSED_STATES, access_state
 from utils.signing import parse_group_link_code, parse_order_start_code
 
 logger = logging.getLogger(__name__)
@@ -66,9 +68,14 @@ class StoreInfo:
     card_number: str | None
     card_holder: str | None
     lang: Lang  # the store's language: its group and unknown buyers
+    # Unpaid past the grace days or suspended: the group's buttons change nothing
+    # and buyers are told the store is closed (same rule as the admin panel).
+    closed: bool = False
+    launched: bool = True
 
     @classmethod
     def of(cls, tenant: Tenant) -> "StoreInfo":
+        state = access_state(tenant.status, tenant.trial_ends_at, tenant.paid_until, datetime.now(UTC))
         return cls(
             id=tenant.id,
             name=tenant.name,
@@ -76,6 +83,8 @@ class StoreInfo:
             card_number=tenant.card_number,
             card_holder=tenant.card_holder,
             lang=db_telegram.store_lang(tenant),
+            closed=state in CLOSED_STATES,
+            launched=tenant.launched_at is not None,
         )
 
 
@@ -174,6 +183,9 @@ async def _on_private_message(ctx: BotContext, message: dict[str, Any], chat: di
     param = _start_param(message.get("text", ""))
     if param is not None:
         order_id = parse_order_start_code(ctx.store.id, param) if param else None
+        if order_id is None and (ctx.store.closed or not ctx.store.launched):
+            await ctx.send(chat_id, text("buyer_store_closed", lang, store=ctx.store.name))
+            return
         if order_id is None:
             await ctx.send(
                 chat_id, text("buyer_welcome", lang, store=ctx.store.name), _store_button(ctx, lang)
@@ -273,6 +285,9 @@ async def _on_callback(ctx: BotContext, query: dict[str, Any]) -> None:
     role = await db_telegram.get_member_role_by_telegram(ctx.db, ctx.store.id, int(sender.get("id", 0)))
     if role is None:
         await _answer(ctx, query, text("cb_not_member", lang), alert=True)
+        return
+    if ctx.store.closed:
+        await _answer(ctx, query, text("cb_store_closed", lang), alert=True)
         return
 
     try:

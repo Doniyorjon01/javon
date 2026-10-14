@@ -13,6 +13,8 @@ Telegram (not for browsers):
 POST   /telegram/webhook/{bot_user_id}       updates for one store's bot; the
                                              X-Telegram-Bot-Api-Secret-Token header
                                              must match that bot's secret
+POST   /telegram/platform                    updates for the platform bot (owners'
+                                             phone numbers; services/platform_bot.py)
 
 The Mini App (buyers; X-Telegram-Init-Data header):
 GET    /storefront/{slug}/telegram/orders    the buyer's orders in this store
@@ -41,6 +43,7 @@ from routers.orders import created_out
 from schemas.base import BIGINT_MAX
 from schemas.order import OrderCreatedOut
 from schemas.telegram import BotConnectIn, BotOut
+from services.platform_bot import handle_platform_update, platform_token, webhook_secret
 from services.telegram import TelegramClient, TelegramError
 from services.telegram_texts import text
 from services.telegram_updates import BotContext, BotInfo, StoreInfo, handle_update
@@ -133,7 +136,7 @@ async def send_test_message(
 # --------------------------------------------------------------------------- #
 # Webhook
 # --------------------------------------------------------------------------- #
-async def _first_time(redis: Redis, bot_id: int, update_id: int) -> bool:
+async def _first_time(redis: Redis, bot_id: int | str, update_id: int) -> bool:
     """Telegram may deliver an update twice (it retries on timeouts): handle it once."""
     try:
         return bool(await redis.set(f"tg:seen:{bot_id}:{update_id}", 1, nx=True, ex=SEEN_TTL_S))
@@ -176,6 +179,29 @@ async def telegram_webhook(
         except Exception:
             # Answer 200 anyway: a retried update would fail the same way.
             logger.exception("Telegram update failed", extra={"tenant_id": tenant_id, "update_id": update_id})
+    return Response(status_code=status.HTTP_200_OK)
+
+
+@webhook_router.post("/platform")
+async def platform_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_pg_db),
+    redis: Redis = Depends(get_redis),
+    client: TelegramClient = Depends(get_telegram),
+) -> Response:
+    secret = request.headers.get(SECRET_HEADER, "")
+    if platform_token() is None or not hmac.compare_digest(secret, webhook_secret()):
+        return Response(status_code=status.HTTP_401_UNAUTHORIZED)
+    try:
+        update = await request.json()
+        update_id = int(update["update_id"])
+    except (ValueError, KeyError, TypeError):
+        return Response(status_code=status.HTTP_400_BAD_REQUEST)
+    if await _first_time(redis, "platform", update_id):
+        try:
+            await handle_platform_update(db, client, update)
+        except Exception:
+            logger.exception("Platform bot update failed", extra={"update_id": update_id})
     return Response(status_code=status.HTTP_200_OK)
 
 

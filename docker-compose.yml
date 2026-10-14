@@ -1,4 +1,4 @@
-# Local development stack. Production adds Caddy, backups and the frontend later.
+# Local development stack. Production: docker-compose.prod.yml (Caddy, backups, no open ports).
 #   docker compose up -d --build    build and start
 #   docker compose down             stop (data stays in volumes)
 #
@@ -36,6 +36,11 @@ x-backend-env: &backend-env
   BOT_TOKEN_KEYS: ${BOT_TOKEN_KEYS:-}
   # MINI_APP_URL_TEMPLATE keeps its default from config.py (https://{slug}.javon.uz/).
   ADMIN_PANEL_URL: ${ADMIN_PANEL_URL:-https://javon.uz/admin}
+  # The platform bot (Login Widget, owners' phones, subscription reminders).
+  PLATFORM_BOT_USERNAME: ${PLATFORM_BOT_USERNAME:-}
+  PLATFORM_CARD_NUMBER: ${PLATFORM_CARD_NUMBER:-}
+  PLATFORM_CARD_HOLDER: ${PLATFORM_CARD_HOLDER:-}
+  PLATFORM_SUPPORT_TELEGRAM: ${PLATFORM_SUPPORT_TELEGRAM:-}
 
 services:
   postgres:
@@ -147,11 +152,17 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-m", "workers.healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     stop_grace_period: 30s
     restart: unless-stopped
 
-  # Local only: reads store bots' updates with getUpdates (no public https URL
-  # needed). Start with: docker compose --profile telegram up -d
+  # Local only: reads store bots' (and the platform bot's) updates with getUpdates
+  # (no public https URL needed). Start with: docker compose --profile telegram up -d
   telegram-poll:
     build: .
     command: ["python", "-m", "scripts.telegram_poll"]

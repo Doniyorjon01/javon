@@ -179,6 +179,84 @@ TEXTS: dict[str, dict[Lang, str]] = {
         Lang.ru: "❌ Заказ #{number} отменён. {reason}",
         Lang.en: "❌ Order #{number} was cancelled. {reason}",
     },
+    # --- closed stores (unpaid or suspended) --------------------------------------------
+    "cb_store_closed": {
+        Lang.uz: "Do'kon obunasi to'xtagan: hozircha o'zgartirib bo'lmaydi.",
+        Lang.ru: "Подписка магазина приостановлена: изменения пока недоступны.",
+        Lang.en: "The store's subscription is paused: changes are not possible for now.",
+    },
+    "buyer_store_closed": {
+        Lang.uz: "<b>{store}</b> do'koni hozircha buyurtma qabul qilmayapti. Keyinroq qaytib keling.",
+        Lang.ru: "Магазин <b>{store}</b> сейчас не принимает заказы. Загляните позже.",
+        Lang.en: "<b>{store}</b> is not taking orders right now. Please come back later.",
+    },
+    # --- the platform bot (javon.uz) --------------------------------------------------
+    "platform_start": {
+        Lang.uz: "Assalomu alaykum! Bu javon.uz boti. Obuna eslatmalari shu yerga keladi.\n\nTelefon raqamingizni pastdagi tugma bilan yuboring: to'lov va yordam masalalarida siz bilan bog'lanamiz.",
+        Lang.ru: "Здравствуйте! Это бот javon.uz. Сюда приходят напоминания о подписке.\n\nОтправьте свой номер кнопкой ниже: мы свяжемся с вами по оплате и поддержке.",
+        Lang.en: "Hello! This is the javon.uz bot. Subscription reminders come here.\n\nSend your phone number with the button below so we can reach you about payments and support.",
+    },
+    "cmd_platform_start": {Lang.uz: "Boshlash", Lang.ru: "Начать", Lang.en: "Start"},
+    "platform_phone_button": {
+        Lang.uz: "📱 Telefon raqamni yuborish",
+        Lang.ru: "📱 Отправить номер телефона",
+        Lang.en: "📱 Send my phone number",
+    },
+    "platform_phone_saved": {
+        Lang.uz: "✅ Raqamingiz saqlandi: {phone}",
+        Lang.ru: "✅ Номер сохранён: {phone}",
+        Lang.en: "✅ Your number is saved: {phone}",
+    },
+    "platform_phone_not_own": {
+        Lang.uz: "Faqat o'zingizning raqamingizni tugma orqali yuboring.",
+        Lang.ru: "Отправьте, пожалуйста, свой собственный номер кнопкой.",
+        Lang.en: "Please send your own number with the button.",
+    },
+    "platform_no_account": {
+        Lang.uz: "Avval javon.uz saytiga Telegram orqali kiring, keyin raqamingizni yuboring.",
+        Lang.ru: "Сначала войдите на javon.uz через Telegram, затем отправьте номер.",
+        Lang.en: "Sign in to javon.uz with Telegram first, then send your number.",
+    },
+    "platform_help": {
+        Lang.uz: "Do'koningizni boshqarish: {url}",
+        Lang.ru: "Управление магазином: {url}",
+        Lang.en: "Manage your store: {url}",
+    },
+    "sub_ends_soon": {
+        Lang.uz: "⏳ <b>{store}</b> do'konining {period} {date} kuni tugaydi. Do'kon to'xtab qolmasligi uchun obunani to'lang.",
+        Lang.ru: "⏳ {period} магазина <b>{store}</b> заканчивается {date}. Оплатите подписку, чтобы магазин не остановился.",
+        Lang.en: "⏳ The {period} of <b>{store}</b> ends on {date}. Pay for the subscription so the store keeps working.",
+    },
+    "sub_grace": {
+        Lang.uz: "⚠️ <b>{store}</b> do'konining obunasi tugadi. Do'kon {date} gacha ishlaydi, keyin sayt yopiladi va panel faqat ko'rish rejimiga o'tadi.",
+        Lang.ru: "⚠️ Подписка магазина <b>{store}</b> закончилась. Магазин работает до {date}, затем сайт закроется, а панель станет только для просмотра.",
+        Lang.en: "⚠️ The subscription of <b>{store}</b> has ended. The store works until {date}; then the site closes and the panel becomes read-only.",
+    },
+    "sub_closed": {
+        Lang.uz: "⛔ <b>{store}</b> do'koni to'xtatildi: sayt yopiq, panel faqat ko'rish rejimida. Obunani to'lashingiz bilan hammasi qayta ishlaydi.",
+        Lang.ru: "⛔ Магазин <b>{store}</b> остановлен: сайт закрыт, панель только для просмотра. Всё заработает снова сразу после оплаты.",
+        Lang.en: "⛔ <b>{store}</b> is paused: the site is closed and the panel is read-only. Everything works again as soon as you pay.",
+    },
+    "sub_paid": {
+        Lang.uz: "✅ To'lov qabul qilindi. <b>{store}</b>: «{plan}» tarifi {date} gacha.",
+        Lang.ru: "✅ Оплата получена. <b>{store}</b>: тариф «{plan}» до {date}.",
+        Lang.en: "✅ Payment received. <b>{store}</b>: the “{plan}” plan until {date}.",
+    },
+    "sub_period_trial": {Lang.uz: "bepul sinov muddati", Lang.ru: "Пробный период", Lang.en: "free trial"},
+    "sub_period_paid": {Lang.uz: "obunasi", Lang.ru: "Подписка", Lang.en: "subscription"},
+    "sub_how_to_pay": {
+        Lang.uz: "\n\nTo'lov: {card} ({holder}). Chekni @{support} ga yuboring.",
+        Lang.ru: "\n\nОплата: {card} ({holder}). Чек отправьте @{support}.",
+        Lang.en: "\n\nPay to: {card} ({holder}). Send the receipt to @{support}.",
+    },
+    "store_suspended_notice": {
+        Lang.uz: "⛔ <b>{store}</b> do'koni platforma tomonidan to'xtatildi. Sabab: {reason}",
+        Lang.ru: "⛔ Магазин <b>{store}</b> остановлен платформой. Причина: {reason}",
+        Lang.en: "⛔ <b>{store}</b> was suspended by the platform. Reason: {reason}",
+    },
+    "plan_start": {Lang.uz: "Start", Lang.ru: "Старт", Lang.en: "Start"},
+    "plan_standard": {Lang.uz: "Standart", Lang.ru: "Стандарт", Lang.en: "Standard"},
+    "plan_pro": {Lang.uz: "Pro", Lang.ru: "Про", Lang.en: "Pro"},
 }
 
 

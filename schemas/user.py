@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from models.tenant import MemberRole, TenantStatus
 from schemas.base import BIGINT_MAX, ORMModel
+from utils.plans import AccessState
 
 
 class TelegramLoginIn(BaseModel):
@@ -58,6 +59,9 @@ class MyStoreOut(ORMModel):
     status: TenantStatus
     role: MemberRole
     launched_at: datetime | None  # None: send the owner back to the setup wizard
+    # trial / active / grace (show a "pay soon" banner) / expired or suspended
+    # (storefront hidden, panel read-only). Details: GET /tenants/{id}/subscription.
+    access: AccessState
 
 
 class MeOut(BaseModel):

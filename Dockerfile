@@ -8,6 +8,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /srv
 
+# DejaVu Sans: Uzbek and Russian letters on printed QR labels (services/qr.py).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 # Dependencies first: this layer is rebuilt only when requirements.txt changes.
 COPY requirements.txt ./
 RUN pip install -r requirements.txt

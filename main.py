@@ -22,11 +22,26 @@ from config import VERSION, settings
 from database.config import engine
 from errors import register_exception_handlers
 from middleware import BodySizeLimitMiddleware, RequestContextMiddleware, StorefrontCORSMiddleware
-from routers import catalog, health, inventory, orders, storefront, system, telegram, tenants
+from routers import (
+    catalog,
+    health,
+    internal,
+    inventory,
+    orders,
+    qr,
+    staff,
+    stats,
+    storefront,
+    subscription,
+    system,
+    telegram,
+    tenants,
+)
 from services.storage import create_storage
 from services.telegram import TelegramClient
 from utils.log import configure_logging
 from utils.redis_cache import create_redis
+from utils.sentry import init_sentry
 
 # Routes that accept a file: they get MAX_UPLOAD_BYTES instead of the 1 MB JSON limit.
 UPLOAD_PATHS = re.compile(
@@ -55,6 +70,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     configure_logging(settings.LOG_LEVEL)
+    init_sentry("api")
 
     app = FastAPI(
         title="javon.uz API",
@@ -109,7 +125,13 @@ def create_app() -> FastAPI:
     app.include_router(telegram.router)
     app.include_router(telegram.webhook_router)
     app.include_router(telegram.mini_app_router)
+    app.include_router(subscription.router)
+    app.include_router(staff.router)
+    app.include_router(staff.invites_router)
+    app.include_router(stats.router)
+    app.include_router(qr.router)
     app.include_router(system.router)
+    app.include_router(internal.router)
 
     add_pagination(app)
     return app

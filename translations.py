@@ -99,6 +99,23 @@ class Msg(StrEnum):
     BOT_GROUP_NOT_LINKED = "bot_group_not_linked"
     TELEGRAM_UNAVAILABLE = "telegram_unavailable"
 
+    # --- subscription and plans ----------------------------------------------
+    SUBSCRIPTION_EXPIRED = "subscription_expired"
+    PLAN_FEATURE_UNAVAILABLE = "plan_feature_unavailable"
+    PAYMENT_NOT_FOUND = "payment_not_found"
+
+    # --- staff ----------------------------------------------------------------
+    STAFF_LIMIT_REACHED = "staff_limit_reached"
+    TOO_MANY_INVITES = "too_many_invites"
+    INVITE_INVALID = "invite_invalid"
+    ALREADY_MEMBER = "already_member"
+    MEMBER_NOT_FOUND = "member_not_found"
+    OWNER_CANNOT_LEAVE = "owner_cannot_leave"
+
+    # --- printables and admin --------------------------------------------------
+    LABEL_ITEMS_INVALID = "label_items_invalid"
+    JOB_NOT_RETRYABLE = "job_not_retryable"
+
 
 MESSAGES: dict[Msg, dict[Lang, str]] = {
     Msg.UNKNOWN_ERROR: {
@@ -448,6 +465,61 @@ MESSAGES: dict[Msg, dict[Lang, str]] = {
         Lang.uz: "Telegram hozir javob bermayapti. Birozdan keyin qayta urinib koʻring.",
         Lang.ru: "Telegram сейчас не отвечает. Попробуйте чуть позже.",
         Lang.en: "Telegram is not answering right now. Please try again shortly.",
+    },
+    Msg.SUBSCRIPTION_EXPIRED: {
+        Lang.uz: "Obuna muddati tugagan: doʻkon faqat koʻrish rejimida. Toʻlovdan keyin hammasi qayta ishlaydi.",
+        Lang.ru: "Подписка закончилась: магазин доступен только для просмотра. После оплаты всё снова заработает.",
+        Lang.en: "The subscription has ended: the store is read-only. Everything works again after payment.",
+    },
+    Msg.PLAN_FEATURE_UNAVAILABLE: {
+        Lang.uz: "Bu imkoniyat joriy tarifingizda yoʻq. Tarifni oʻzgartiring.",
+        Lang.ru: "Эта возможность недоступна на вашем тарифе. Смените тариф.",
+        Lang.en: "Your plan does not include this feature. Change the plan.",
+    },
+    Msg.PAYMENT_NOT_FOUND: {
+        Lang.uz: "Toʻlov topilmadi.",
+        Lang.ru: "Платёж не найден.",
+        Lang.en: "Payment not found.",
+    },
+    Msg.STAFF_LIMIT_REACHED: {
+        Lang.uz: "Tarifingizda xodimlar soni {} tagacha. Tarifni oʻzgartiring yoki kimnidir olib tashlang.",
+        Lang.ru: "На вашем тарифе до {} сотрудников. Смените тариф или удалите кого-нибудь.",
+        Lang.en: "Your plan allows up to {} staff. Change the plan or remove someone.",
+    },
+    Msg.TOO_MANY_INVITES: {
+        Lang.uz: "Ochiq takliflar {} tadan oshmasligi kerak. Eskilarini bekor qiling.",
+        Lang.ru: "Открытых приглашений может быть не больше {}. Отмените старые.",
+        Lang.en: "At most {} open invites. Revoke old ones first.",
+    },
+    Msg.INVITE_INVALID: {
+        Lang.uz: "Taklif havolasi notoʻgʻri, muddati oʻtgan yoki allaqachon ishlatilgan.",
+        Lang.ru: "Ссылка-приглашение неверна, просрочена или уже использована.",
+        Lang.en: "The invite link is wrong, expired or already used.",
+    },
+    Msg.ALREADY_MEMBER: {
+        Lang.uz: "Siz bu doʻkonda allaqachon ishlaysiz.",
+        Lang.ru: "Вы уже работаете в этом магазине.",
+        Lang.en: "You already work in this store.",
+    },
+    Msg.MEMBER_NOT_FOUND: {
+        Lang.uz: "Bu odam doʻkonda ishlamaydi.",
+        Lang.ru: "Этот человек не работает в магазине.",
+        Lang.en: "This person does not work in the store.",
+    },
+    Msg.OWNER_CANNOT_LEAVE: {
+        Lang.uz: "Doʻkon egasini olib tashlab boʻlmaydi.",
+        Lang.ru: "Владельца магазина нельзя удалить.",
+        Lang.en: "The store's owner cannot be removed.",
+    },
+    Msg.LABEL_ITEMS_INVALID: {
+        Lang.uz: "Kitoblar roʻyxati notoʻgʻri yoki boʻsh (koʻpi bilan {} ta yorliq).",
+        Lang.ru: "Список книг неверен или пуст (не больше {} наклеек).",
+        Lang.en: "The book list is wrong or empty (at most {} labels).",
+    },
+    Msg.JOB_NOT_RETRYABLE: {
+        Lang.uz: "Faqat muvaffaqiyatsiz tugagan vazifani qayta ishga tushirish mumkin.",
+        Lang.ru: "Повторить можно только задачу, завершившуюся ошибкой.",
+        Lang.en: "Only a failed job can be retried.",
     },
 }
 

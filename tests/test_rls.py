@@ -105,7 +105,13 @@ async def test_bind_tenant_refuses_to_switch_store(probe: None) -> None:
 
 
 # Tables that carry tenant_id but are platform-level ON PURPOSE (see their models).
-PLATFORM_TABLES_WITH_TENANT_ID = {"memberships", "jobs", "telegram_bots"}
+PLATFORM_TABLES_WITH_TENANT_ID = {
+    "memberships",
+    "jobs",
+    "telegram_bots",
+    "staff_invites",
+    "subscription_payments",
+}
 
 
 async def test_every_store_table_has_rls(owner_engine: AsyncEngine) -> None:

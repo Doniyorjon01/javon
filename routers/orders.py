@@ -63,7 +63,7 @@ from translations import Msg
 from utils.i18n import Lang, get_lang
 from utils.images import RECEIPT_SPEC, variant_key
 from utils.pagination import CustomPage
-from utils.rate_limit import hit
+from utils.rate_limit import PROOF_LIMIT, hit
 from utils.redis_cache import get_redis
 from utils.signing import check_order_token, order_start_code, order_token
 from utils.telegram_auth import MiniAppUser
@@ -140,7 +140,9 @@ def _check_token(tenant_id: int, order_id: int, token: str, lang: Lang) -> None:
         raise generate_error(Msg.ORDER_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND)
 
 
-@public_router.post("/{order_id}/payment-proof", response_model=OrderTrackOut)
+@public_router.post(
+    "/{order_id}/payment-proof", response_model=OrderTrackOut, dependencies=[Depends(PROOF_LIMIT)]
+)
 async def upload_payment_proof(
     file: UploadFile = File(description="Screenshot of the bank app's receipt"),
     order_id: int = OrderId,

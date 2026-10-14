@@ -1,0 +1,227 @@
+# Production on one server in Uzbekistan (personal-data law: data stays in the country).
+#
+#   cp .env.production.example .env      fill in every value
+#   docker compose -f docker-compose.prod.yml up -d --build
+#   docker compose -f docker-compose.prod.yml exec backend python -m scripts.platform_bot
+#
+# Only Caddy is reachable from the internet (80, 443). PostgreSQL, Redis, file
+# storage and the API publish no ports: they talk over the Compose network.
+# The frontend (Next.js) joins later as the `frontend` service; until then Caddy
+# answers 502 for javon.uz and store subdomains, and api.javon.uz already works.
+
+name: javon
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-backend-env: &backend-env
+  ENV: production
+  DEBUG: "false"
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  BASE_DOMAIN: ${BASE_DOMAIN:?set in .env}
+  APP_URL: https://${BASE_DOMAIN}
+  PUBLIC_API_URL: https://api.${BASE_DOMAIN}
+  STOREFRONT_URL_TEMPLATE: https://{slug}.${BASE_DOMAIN}/
+  MINI_APP_URL_TEMPLATE: https://{slug}.${BASE_DOMAIN}/
+  ADMIN_PANEL_URL: https://${BASE_DOMAIN}/admin
+  CORS_ORIGINS: '["https://${BASE_DOMAIN}"]'
+  CORS_ORIGIN_REGEX: ${CORS_ORIGIN_REGEX:?set in .env}
+  SESSION_COOKIE_SECURE: "true"
+  SESSION_COOKIE_DOMAIN: .${BASE_DOMAIN}
+  DATABASE_URL: postgresql+asyncpg://javon_app:${JAVON_APP_PASSWORD:?set in .env}@postgres:5432/javon
+  MIGRATION_DATABASE_URL: postgresql+asyncpg://javon_owner:${JAVON_OWNER_PASSWORD:?set in .env}@postgres:5432/javon
+  REDIS_URL: redis://redis:6379/0
+  STORAGE_ENDPOINT_URL: http://storage:8333
+  STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?set in .env}
+  STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?set in .env}
+  STORAGE_BUCKET: javon-media
+  STORAGE_PRIVATE_BUCKET: javon-private
+  STORAGE_PUBLIC_URL: https://media.${BASE_DOMAIN}/javon-media
+  SECRET_KEY: ${SECRET_KEY:?set in .env}
+  BOT_TOKEN_KEYS: ${BOT_TOKEN_KEYS:?set in .env}
+  TELEGRAM_MODE: webhook
+  TELEGRAM_LOGIN_BOT_TOKEN: ${TELEGRAM_LOGIN_BOT_TOKEN:?set in .env}
+  PLATFORM_BOT_USERNAME: ${PLATFORM_BOT_USERNAME:?set in .env}
+  PLATFORM_CARD_NUMBER: ${PLATFORM_CARD_NUMBER:-}
+  PLATFORM_CARD_HOLDER: ${PLATFORM_CARD_HOLDER:-}
+  PLATFORM_SUPPORT_TELEGRAM: ${PLATFORM_SUPPORT_TELEGRAM:-}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set in .env}
+      JAVON_OWNER_PASSWORD: ${JAVON_OWNER_PASSWORD:?set in .env}
+      JAVON_APP_PASSWORD: ${JAVON_APP_PASSWORD:?set in .env}
+      JAVON_TEST_DB: "false"  # no javon_test database on a server
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U javon_owner -d javon"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+    restart: always
+
+  storage:
+    image: chrislusf/seaweedfs:4.48
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '{"identities":[{"name":"javon","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Tagging","Write"]}]}' "$$STORAGE_ACCESS_KEY" "$$STORAGE_SECRET_KEY" > /tmp/s3.json
+        exec weed server -dir=/data -ip=storage -ip.bind=0.0.0.0 -master.telemetry=false -master.volumeSizeLimitMB=1024 -volume.max=0 -s3 -s3.port=8333 -s3.config=/tmp/s3.json
+    environment:
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?set in .env}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?set in .env}
+    volumes:
+      - storagedata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -S -O /dev/null http://127.0.0.1:8333/ 2>&1 | grep -q HTTP/"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    logging: *logging
+    restart: always
+
+  storage-init:
+    build: .
+    command: ["python", "-m", "scripts.storage_init"]
+    environment: *backend-env
+    depends_on:
+      storage:
+        condition: service_healthy
+    restart: "no"
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build: .
+    # Same as the Dockerfile's CMD, with API_WORKERS processes (one per CPU core is plenty).
+    command:
+      - uvicorn
+      - main:app
+      - --host=0.0.0.0
+      - --port=8000
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+      - --no-access-log
+      - --workers=${API_WORKERS:-2}
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      storage-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *logging
+    restart: always
+
+  worker:
+    build: .
+    command: ["python", "-m", "workers.main"]
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-m", "workers.healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 30s
+    logging: *logging
+    restart: always
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      BASE_DOMAIN: ${BASE_DOMAIN:?set in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set in .env}
+      FRONTEND_UPSTREAM: ${FRONTEND_UPSTREAM:-frontend:3000}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    logging: *logging
+    restart: always
+
+  # Daily pg_dump into ./backups/db (deploy/backup-db.sh), kept BACKUP_KEEP_DAYS days.
+  backup-db:
+    image: postgres:16-alpine
+    entrypoint: ["/bin/sh", "/backup-db.sh"]
+    environment:
+      JAVON_OWNER_PASSWORD: ${JAVON_OWNER_PASSWORD:?set in .env}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - ./deploy/backup-db.sh:/backup-db.sh:ro
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *logging
+    restart: always
+
+  # Daily mirror of both buckets into ./backups/files (scripts/backup_files.py).
+  backup-files:
+    build: .
+    command: ["python", "-m", "scripts.backup_files", "/backups/files", "--loop"]
+    environment: *backend-env
+    user: "0:0"  # writes into the host folder ./backups
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
+    logging: *logging
+    restart: always
+
+volumes:
+  pgdata:
+  redisdata:
+  storagedata:
+  caddy_data:
+  caddy_config:

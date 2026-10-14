@@ -2,7 +2,8 @@
 Sign-in routes
 ==============
 POST /auth/telegram   the frontend posts the Telegram Login Widget payload as is;
-                      on success the session cookie is set and MeOut returned
+                      on success the session cookie is set and MeOut returned.
+                      At most AUTH_RATE_LIMIT attempts per IP per AUTH_RATE_WINDOW_S.
 POST /auth/dev-login  ENV=local/test only: sign in as any Telegram id, no widget
                       (the widget only works on a real domain). Not even registered
                       in staging or production.
@@ -33,6 +34,7 @@ from models.user import User
 from schemas.user import DevLoginIn, MeOut, TelegramLoginIn, UserOut
 from translations import Msg
 from utils.i18n import Lang, get_lang
+from utils.rate_limit import AUTH_LIMIT
 from utils.telegram_auth import TelegramAuthError, verify_login_widget
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -56,7 +58,7 @@ async def _start_session(db: AsyncSession, user: User, request: Request, respons
     return await _me(db, user)
 
 
-@router.post("/telegram", response_model=MeOut)
+@router.post("/telegram", response_model=MeOut, dependencies=[Depends(AUTH_LIMIT)])
 async def login_with_telegram(
     data: TelegramLoginIn,
     request: Request,
@@ -91,7 +93,7 @@ async def login_with_telegram(
     return await _start_session(db, user, request, response)
 
 
-@dev_router.post("/dev-login", response_model=MeOut)
+@dev_router.post("/dev-login", response_model=MeOut, dependencies=[Depends(AUTH_LIMIT)])
 async def dev_login(
     data: DevLoginIn,
     request: Request,

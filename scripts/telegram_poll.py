@@ -8,6 +8,11 @@ default outside production), connecting a bot removes its webhook, and this
 script asks Telegram for every active bot's new updates and hands them to the
 same handler the webhook uses (services/telegram_updates.py). Stop with Ctrl+C.
 
+The platform bot (TELEGRAM_LOGIN_BOT_TOKEN) is polled too, once its webhook is
+removed with `python -m scripts.platform_bot` (in polling mode). While that bot
+has a webhook (production), Telegram refuses getUpdates with 409 and this script
+leaves it alone: a laptop never steals the server's updates.
+
 Not for production: there TELEGRAM_MODE=webhook and Telegram calls the API.
 """
 
@@ -19,6 +24,7 @@ import signal
 from config import settings
 from database import db_telegram, db_tenant
 from database.config import SessionLocal, bind_tenant, engine
+from services.platform_bot import handle_platform_update, platform_token
 from services.storage import create_storage
 from services.telegram import TelegramClient, TelegramError
 from services.telegram_updates import BotContext, BotInfo, StoreInfo, handle_update
@@ -58,6 +64,37 @@ async def poll_once(client: TelegramClient, private_storage: object) -> int:
     return handled
 
 
+class PlatformPoller:
+    """The platform bot's offset lives in memory: after a restart Telegram re-sends
+    unconfirmed updates, and handling them twice is harmless (a phone saved twice)."""
+
+    def __init__(self) -> None:
+        self.offset: int | None = None
+        self.paused = False  # the bot has a webhook (409): stop asking
+
+    async def poll(self, client: TelegramClient) -> int:
+        token = platform_token()
+        if token is None or self.paused:
+            return 0
+        try:
+            updates = await client.get_updates(token, offset=self.offset)
+        except TelegramError as exc:
+            if exc.code == 409:
+                self.paused = True
+                logger.warning("Platform bot has a webhook; run `python -m scripts.platform_bot` to poll it")
+            else:
+                logger.warning("Platform getUpdates failed", extra={"code": exc.code})
+            return 0
+        for update in updates:
+            async with SessionLocal() as db:
+                try:
+                    await handle_platform_update(db, client, update)
+                except Exception:
+                    logger.exception("Platform bot update failed")
+            self.offset = int(update["update_id"]) + 1
+        return len(updates)
+
+
 async def main() -> None:
     configure_logging(settings.LOG_LEVEL)
     stop = asyncio.Event()
@@ -66,11 +103,13 @@ async def main() -> None:
         loop.add_signal_handler(sig, stop.set)
     client = TelegramClient()
     private_storage = create_storage(settings.STORAGE_PRIVATE_BUCKET)
+    platform = PlatformPoller()
     logger.info("Polling Telegram for all active store bots")
     try:
         while not stop.is_set():
             try:
                 await poll_once(client, private_storage)
+                await platform.poll(client)
             except Exception:
                 logger.exception("Polling round failed")
             with contextlib.suppress(TimeoutError):

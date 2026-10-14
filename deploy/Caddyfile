@@ -1,0 +1,69 @@
+# javon.uz — the only entry point from the internet (docker-compose.prod.yml).
+#
+#   javon.uz, www          the platform site (Next.js)
+#   api.javon.uz           this API; /internal/* is refused from outside
+#   media.javon.uz         public covers and logos (javon-media bucket only, read-only)
+#   <slug>.javon.uz        store sites (Next.js); certificates on demand, each one
+#                          approved by GET /internal/tls-ask (an existing store)
+#
+# BASE_DOMAIN, ACME_EMAIL and FRONTEND_UPSTREAM come from the environment.
+
+{
+	email {$ACME_EMAIL}
+	on_demand_tls {
+		ask http://backend:8000/internal/tls-ask
+	}
+}
+
+(common) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	log {
+		output stdout
+		format json
+	}
+}
+
+api.{$BASE_DOMAIN} {
+	import common
+	@internal path /internal/*
+	respond @internal 404
+	reverse_proxy backend:8000 {
+		health_uri /health
+	}
+}
+
+media.{$BASE_DOMAIN} {
+	import common
+	# Only GET/HEAD of the public bucket. The private bucket (payment receipts),
+	# listings and every write stay unreachable from the internet.
+	@public {
+		method GET HEAD
+		path /javon-media/*
+	}
+	handle @public {
+		header Cache-Control "public, max-age=31536000, immutable"
+		reverse_proxy storage:8333
+	}
+	respond 404
+}
+
+{$BASE_DOMAIN}, www.{$BASE_DOMAIN} {
+	import common
+	reverse_proxy {$FRONTEND_UPSTREAM:frontend:3000}
+}
+
+# Every other name: store subdomains. Caddy asks /internal/tls-ask before
+# requesting a certificate, so random names pointed at us get nothing.
+https:// {
+	import common
+	tls {
+		on_demand
+	}
+	reverse_proxy {$FRONTEND_UPSTREAM:frontend:3000}
+}

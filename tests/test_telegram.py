@@ -5,6 +5,7 @@ receipts.
 """
 
 import io
+import itertools
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -14,7 +15,7 @@ import pytest
 from httpx import AsyncClient
 from PIL import Image
 from redis.asyncio import Redis
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from config import settings
@@ -95,8 +96,13 @@ async def shop(client: AsyncClient, db: AsyncSession) -> Shop:
     return Shop(tenant, owner, item.book_id)
 
 
+_update_ids = itertools.count(1_000_000)  # above the ids tests set by hand
+
+
 async def webhook(client: AsyncClient, db: AsyncSession, shop: Shop, update_body: dict[str, Any]) -> int:
-    update_body.setdefault("update_id", int(time.time() * 1000) % 2_000_000_000 + id(update_body) % 1000)
+    # A counter, not the clock: two updates in one millisecond would share an id and
+    # the second would be dropped as a duplicate (the webhook handles each id once).
+    update_body.setdefault("update_id", next(_update_ids))
     resp = await client.post(
         f"/telegram/webhook/{BOT_ID}",
         json=update_body,
@@ -593,3 +599,28 @@ async def test_payment_settings(client: AsyncClient, db: AsyncSession) -> None:
     }
     refused = await client.post("/storefront/varaq/orders", json=body)
     assert refused.json()["detail"]["code"] == "payment_method_unavailable"
+
+
+# --------------------------------------------------------------------------- #
+# A closed store (unpaid past the grace days, or suspended)
+# --------------------------------------------------------------------------- #
+async def test_closed_store_buttons_and_welcome(
+    client: AsyncClient, db: AsyncSession, shop: Shop, telegram: FakeTelegram
+) -> None:
+    await link_group(client, db, shop)
+    resp = await client.post("/storefront/varaq/orders", json=checkout(shop))
+    order_id = resp.json()["id"]
+    await db.execute(
+        update(Tenant)
+        .where(Tenant.id == shop.tenant.id)
+        .values(trial_ends_at=func.now() - text("interval '10 days'"))
+    )
+    await db.commit()
+
+    assert await webhook(client, db, shop, press(f"acc:{order_id}", shop.owner.telegram_id)) == 200
+    answer = [c for c in telegram.calls if c.method == "answerCallbackQuery"][-1]
+    assert "obunasi to'xtagan" in answer.params["text"]
+    assert (await order_row(order_id, shop.tenant.id)).status == "new"
+
+    assert await webhook(client, db, shop, private_message(text="/start")) == 200
+    assert "buyurtma qabul qilmayapti" in telegram.sent_texts(BUYER_TG)[-1]

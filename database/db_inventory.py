@@ -35,12 +35,13 @@ from services.excel import ExcelError, read_rows
 from translations import Msg
 from utils.i18n import DEFAULT_LANG, Lang
 from utils.isbn import normalize_isbn
+from utils.plans import PLANS
 from utils.translit import search_key
 
 ITEM_UNIQUE_INDEX = "uq_inventory_items_tenant_book_live"
 
-# Different books on sale per plan; None = unlimited. Trial stores are on STANDARD.
-PLAN_ITEM_LIMITS: dict[Plan, int | None] = {Plan.START: 300, Plan.STANDARD: 3000, Plan.PRO: None}
+# Different books on sale per plan (utils/plans.py); None = unlimited. Trial stores are on STANDARD.
+PLAN_ITEM_LIMITS: dict[Plan, int | None] = {plan: info.item_limit for plan, info in PLANS.items()}
 
 
 def _with_book(stmt: Select) -> Select:
@@ -100,6 +101,30 @@ async def get_item(
     if item is None:
         raise generate_error(Msg.INVENTORY_ITEM_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND)
     return item
+
+
+async def get_label_items(
+    db: AsyncSession, tenant_id: int, item_ids: list[int] | None, limit: int, lang: Lang = DEFAULT_LANG
+) -> list[InventoryItem]:
+    """
+    Items for shelf labels, in the order asked (an id twice = two labels). No ids:
+    every book on sale, by title. Any id that is not this store's item -> 404.
+    """
+    stmt = _with_book(select(InventoryItem)).where(
+        InventoryItem.tenant_id == tenant_id, InventoryItem.is_active.is_(True)
+    )
+    if item_ids is None:
+        stmt = (
+            stmt.join(Book, Book.id == InventoryItem.book_id)
+            .where(InventoryItem.is_visible.is_(True))
+            .order_by(Book.title, InventoryItem.id)
+            .limit(limit)
+        )
+        return list(await db.scalars(stmt))
+    found = {item.id: item for item in await db.scalars(stmt.where(InventoryItem.id.in_(set(item_ids))))}
+    if len(found) != len(set(item_ids)):
+        raise generate_error(Msg.INVENTORY_ITEM_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND)
+    return [found[item_id] for item_id in item_ids]
 
 
 async def get_item_by_isbn(
@@ -271,6 +296,9 @@ async def create_import(
     hears about a wrong file at once), then queue it for the worker. The import
     row and its job are committed together.
     """
+    plan = await db.scalar(select(Tenant.plan).where(Tenant.id == tenant_id))
+    if plan is None or not PLANS[plan].excel_import:
+        raise generate_error(Msg.PLAN_FEATURE_UNAVAILABLE, lang, status.HTTP_403_FORBIDDEN)
     try:
         rows = await asyncio.to_thread(read_rows, data, settings.MAX_IMPORT_ROWS)
     except ExcelError as exc:
