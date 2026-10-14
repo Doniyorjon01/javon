@@ -28,12 +28,14 @@ database/       db_<soha>.py: barcha so'rovlar va o'zgarishlar, commit shu yerda
 models/         SQLAlchemy jadvallari. Har biri BaseModel'dan meros oladi.
 schemas/        Pydantic: XBase, XCreate, XUpdate, XOut, XOutFull.
 services/       Tashqi xizmatlar va fayllar: storage.py (S3), media.py (rasm yuklash),
-                excel.py (shablon va o'qish); keyin Telegram va to'lov. Routerlar SDK
-                obyektlariga tegmaydi.
+                excel.py (shablon va o'qish), telegram.py (Bot API klienti),
+                telegram_updates.py (bot xabarlariga javob), telegram_texts.py (bot matnlari).
+                Routerlar SDK obyektlariga tegmaydi.
 workers/        Fon vazifalari (`jobs` jadvali): main.py sikl, har vazifa o'z sessiyasida,
                 vazifa do'koniga bog'langan (RLS).
 auth/           Kirish va rol dependency'lari.
-utils/          i18n, pagination, redis_cache, log, images, phone, signing, rate_limit, translit, isbn.
+utils/          i18n, pagination, redis_cache, log, images, phone, signing, rate_limit, translit, isbn,
+                crypto (bot tokenlari), money (so'm formati), telegram_auth.
 alembic/        Migratsiyalar.
 scripts/        Yordamchi skriptlar; postgres-init/ — Postgres rollari (faqat bo'sh volume'da).
 tests/          pytest.
@@ -124,7 +126,27 @@ async def get_book(
 - Narxni mijoz yubormaydi, server zaxiradan oladi. Bir IP bir do'konga `ORDER_RATE_LIMIT` dan ko'p buyurtma bera olmaydi (Redis; Redis ishlamasa ruxsat beriladi).
 - Kuzatish havolasi: `/storefront/{slug}/orders/{id}?token=` — token `SECRET_KEY` bilan HMAC (`utils/signing.py`), bazada saqlanmaydi. Noto'g'ri token = 404.
 - Holatlar `db_order.TRANSITIONS` da; olib ketiladigan buyurtma `shipping` dan o'tmaydi; bekor qilinganda qoldiq qaytadi; naqd buyurtma `completed` bo'lganda `paid`.
-- Rollback ORM obyektlarini eskirtiradi: rollback'dan keyin kerak bo'ladigan qiymatni (id, holat) oldindan o'zgaruvchiga oling, aks holda `MissingGreenlet`.
+- Rollback ORM obyektlarini eskirtiradi: rollback'dan keyin kerak bo'ladigan qiymatni (id, holat) oldindan o'zgaruvchiga oling, aks holda `MissingGreenlet`. Uzoq yashaydigan kontekstda ORM obyekt emas, nusxa (`StoreInfo`, `BotInfo`) saqlanadi; bitta ustunni o'zgartirish `UPDATE ... WHERE id = :id` bilan (`db_telegram.set_group`, `mark_broken`).
+
+## To'lov: kartaga o'tkazma (9-qadam)
+
+- Usullar: `cash` va `card_transfer`. Do'kon sozlamasi: `cash_enabled`, `card_transfer_enabled`, `card_number` (16 raqam), `card_holder`; kamida bittasi yoqilgan bo'lishi shart (bazada CHECK ham bor). Yopiq usul bilan buyurtma 409 `payment_method_unavailable`.
+- Holat: `unpaid` → chek yuborildi `under_review` → xodim tasdiqladi `paid` (`paid_at`). Rad etilsa `unpaid` ga qaytadi va `payment_note` da sabab; xaridor yangi chek yuboradi.
+- Chek: vitrinadan `POST /storefront/{slug}/orders/{id}/payment-proof?token=` yoki botga rasm. Rasm qayta kodlanadi (`RECEIPT_SPEC`) va YOPIQ bucket'ga (`STORAGE_PRIVATE_BUCKET`, `receipts/{tenant}/{order}/...`) yoziladi. Ko'rish faqat xodimga, API orqali (`GET /tenants/{id}/orders/{id}/payment-proof`, `Cache-Control: private, no-store`). Ommaviy URL yo'q.
+- Kartaga to'lanmagan buyurtmani `shipping`/`completed` ga o'tkazib bo'lmaydi (409 `order_not_paid`).
+- Chek yuborilmagan karta buyurtmasi oxirgi o'zgarishdan `CARD_TRANSFER_HOLD_HOURS` (24) o'tib avtomatik bekor qilinadi va kitoblar javonga qaytadi (`workers/main.run_periodic_tasks`, har 5 daqiqada). Tekshiruvdagi chek hech qachon avtomatik bekor qilinmaydi.
+
+## Telegram (9-qadam)
+
+- Har do'konning o'z boti (`telegram_bots`, platforma jadvali, RLS yo'q, `tenant_id` bo'yicha aniq filtr). Token `BOT_TOKEN_KEYS` (MultiFernet) bilan shifrlanib saqlanadi (`utils/crypto.py`); token logga, xatoga, javobga tushmaydi.
+- aiogram ishlatilmaydi (pydantic<2.14 talab qiladi): `services/telegram.TelegramClient` — httpx ustidagi yupqa klient, token har chaqiruvning argumenti.
+- Rejimlar: serverda `TELEGRAM_MODE=webhook` (`POST /telegram/webhook/{bot_user_id}`, `X-Telegram-Bot-Api-Secret-Token` har botning o'z siri bilan solishtiriladi, takror update Redis bilan bir marta ishlanadi, javob doim 200); lokal `polling` (`scripts/telegram_poll.py`).
+- Xodimlar guruhi: egasi `group_link_url` orqali botni guruhga qo'shadi; imzolangan kod (`utils/signing.group_link_code`) va qo'shgan odam do'kon xodimi bo'lsagina guruh ulanadi. Guruh supergroup'ga aylansa (`migrate_to_chat_id`) id yangilanadi; bot chiqarib yuborilsa guruh uziladi.
+- Guruhdagi tugmalar (qabul qilish, chekni tasdiqlash/rad etish) bosgan odamning do'kon xodimi ekanini `telegram_id` bo'yicha tekshiradi.
+- Xaridor: `/start` → Mini App tugmasi; `/start o{id}_{token}` → buyurtma shu Telegram akkauntga bog'lanadi va holat xabarlari keladi. Mini App `X-Telegram-Init-Data` sarlavhasini yuboradi, imzo `utils/telegram_auth.verify_init_data` da (`WebAppData` kaliti) tekshiriladi.
+- Shaxsiy ma'lumot: xaridor telefoni va manzili Telegram'ga yuborilmaydi (`TELEGRAM_ORDER_CONTACTS=False`, Telegram serverlari chet elda). Vitrinadan yuklangan chek ham Telegram'ga yuborilmaydi; botga yuborilgan chek guruhga `copyMessage` bilan o'tadi (u allaqachon Telegram'da).
+- Xabarlar faqat worker'dan (outbox), so'rov ichidan emas. 401 (token bekor qilingan) → bot `broken`; 400/403 → log; boshqa xato → guruh xabari qayta urinadi.
+- Bot matnlari `services/telegram_texts.TEXTS` da, uch tilda; qiymatlar HTML-escape qilinadi (`raw()` faqat o'zimiz yasagan matn uchun).
 
 ## Kirish va rollar
 

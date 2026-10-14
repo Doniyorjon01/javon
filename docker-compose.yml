@@ -27,6 +27,15 @@ x-backend-env: &backend-env
   TELEGRAM_LOGIN_BOT_TOKEN: ${TELEGRAM_LOGIN_BOT_TOKEN:-}
   SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
   SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
+  # Receipts of card transfers: a private bucket (scripts/storage_init.py gives it no public policy).
+  STORAGE_PRIVATE_BUCKET: ${STORAGE_PRIVATE_BUCKET:-javon-private}
+  # Store bots: "polling" locally (the telegram-poll service), "webhook" on a server.
+  TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
+  PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8010}
+  # Encrypts store bot tokens (Fernet). Required in production.
+  BOT_TOKEN_KEYS: ${BOT_TOKEN_KEYS:-}
+  # MINI_APP_URL_TEMPLATE keeps its default from config.py (https://{slug}.javon.uz/).
+  ADMIN_PANEL_URL: ${ADMIN_PANEL_URL:-https://javon.uz/admin}
 
 services:
   postgres:
@@ -139,6 +148,22 @@ services:
       migrate:
         condition: service_completed_successfully
     stop_grace_period: 30s
+    restart: unless-stopped
+
+  # Local only: reads store bots' updates with getUpdates (no public https URL
+  # needed). Start with: docker compose --profile telegram up -d
+  telegram-poll:
+    build: .
+    command: ["python", "-m", "scripts.telegram_poll"]
+    environment: *backend-env
+    profiles: ["telegram"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      storage-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:

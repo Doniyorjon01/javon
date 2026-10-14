@@ -180,7 +180,7 @@ class StorefrontCORSMiddleware:
     """
 
     ALLOW_METHODS = "GET, POST"
-    ALLOW_HEADERS = "Content-Type, Accept-Language"
+    ALLOW_HEADERS = "Content-Type, Accept-Language, X-Telegram-Init-Data"
     EXPOSE_HEADERS = "X-Request-ID, Retry-After"
 
     def __init__(self, app: ASGIApp, origin_regex: str, trusted_origins: list[str]) -> None:

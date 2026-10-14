@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from database import db_job
+from database import db_job, db_order, db_tenant
 from database.config import SessionLocal, bind_tenant, engine
 from database.db_job import JobKind
 from middleware import request_id_var
@@ -40,9 +40,12 @@ HANDLERS: dict[str, Handler] = {
     JobKind.INVENTORY_IMPORT: inventory_import.run,
     JobKind.ORDER_CREATED: notifications.order_created,
     JobKind.ORDER_STATUS_CHANGED: notifications.order_status_changed,
+    JobKind.PAYMENT_PROOF_RECEIVED: notifications.payment_proof_received,
+    JobKind.PAYMENT_REVIEWED: notifications.payment_reviewed,
 }
 
 STALE_CHECK_INTERVAL_S = 60.0
+PERIODIC_INTERVAL_S = 300.0
 
 
 class UnknownJobKindError(Exception):
@@ -116,11 +119,34 @@ async def _reaper(stop: asyncio.Event) -> None:
         await _sleep_or_stop(stop, STALE_CHECK_INTERVAL_S)
 
 
+async def run_periodic_tasks() -> None:
+    """Every PERIODIC_INTERVAL_S: work that no request triggers. Per store, under RLS."""
+    async with SessionLocal() as db:
+        tenant_ids = await db_tenant.get_active_tenant_ids(db)
+    for tenant_id in tenant_ids:
+        try:
+            async with SessionLocal() as db:
+                await bind_tenant(db, tenant_id)
+                await db_order.cancel_unpaid_card_orders(db, tenant_id)
+        except Exception:
+            logger.exception("Periodic task failed", extra={"tenant_id": tenant_id})
+
+
+async def _periodic(stop: asyncio.Event) -> None:
+    while not stop.is_set():
+        try:
+            await run_periodic_tasks()
+        except Exception:
+            logger.exception("Periodic tasks failed")
+        await _sleep_or_stop(stop, PERIODIC_INTERVAL_S)
+
+
 async def serve(stop: asyncio.Event) -> None:
     lanes = [asyncio.create_task(_lane(stop)) for _ in range(settings.WORKER_CONCURRENCY)]
-    reaper = asyncio.create_task(_reaper(stop))
+    others = [asyncio.create_task(_reaper(stop)), asyncio.create_task(_periodic(stop))]
     logger.info("Worker started", extra={"lanes": len(lanes)})
-    await asyncio.gather(*lanes, reaper)
+    await asyncio.gather(*lanes, *others)
+    await notifications.get_client().aclose()
     await engine.dispose()
     logger.info("Worker stopped")
 

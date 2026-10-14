@@ -15,7 +15,7 @@ end with "_test" — a guard against pointing them at real data by mistake.
 import os
 import subprocess
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -65,6 +65,8 @@ from database.config import SessionLocal, engine
 from main import create_app
 from models import Base
 from services.storage import MemoryStorage
+from tests.fake_telegram import FakeTelegram
+from workers import notifications
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -81,14 +83,31 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def storage() -> MemoryStorage:
-    """Files the app stored during the test (no MinIO needed)."""
+    """Files the app stored in the public bucket during the test (no S3 server needed)."""
     return MemoryStorage()
 
 
 @pytest.fixture
-def app(storage: MemoryStorage) -> FastAPI:
+def private_storage() -> MemoryStorage:
+    """The private bucket (payment receipts)."""
+    return MemoryStorage()
+
+
+@pytest.fixture
+def telegram() -> Iterator[FakeTelegram]:
+    """Telegram for the API and the worker: an in-process fake that records every call."""
+    fake = FakeTelegram()
+    notifications.set_client(fake.client)
+    yield fake
+    notifications.set_client(None)
+
+
+@pytest.fixture
+def app(storage: MemoryStorage, private_storage: MemoryStorage, telegram: FakeTelegram) -> FastAPI:
     app = create_app()
     app.state.storage = storage
+    app.state.private_storage = private_storage
+    app.state.telegram = telegram.client
     return app
 
 

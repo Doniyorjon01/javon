@@ -28,6 +28,8 @@ class JobKind(StrEnum):
     INVENTORY_IMPORT = "inventory_import"
     ORDER_CREATED = "order_created"
     ORDER_STATUS_CHANGED = "order_status_changed"
+    PAYMENT_PROOF_RECEIVED = "payment_proof_received"
+    PAYMENT_REVIEWED = "payment_reviewed"
 
 
 def enqueue(

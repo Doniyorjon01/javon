@@ -97,6 +97,15 @@ class OrderItemOut(ORMModel):
     line_total: int
 
 
+class CardTransferOut(BaseModel):
+    """What the buyer must transfer, and where (shown after a card-transfer checkout)."""
+
+    card_number: str
+    card_holder: str
+    amount: int  # tiyin
+    hold_hours: int  # unpaid orders are cancelled after this
+
+
 class OrderTrackOut(ORMModel):
     id: int
     number: int
@@ -110,6 +119,7 @@ class OrderTrackOut(ORMModel):
     total: int
     payment_method: PaymentMethod
     payment_status: PaymentStatus
+    payment_note: str | None  # why the store did not accept the receipt
     cancel_reason: str | None
     created_at: datetime
     accepted_at: datetime | None
@@ -126,6 +136,10 @@ class OrderTrackOut(ORMModel):
 class OrderCreatedOut(OrderTrackOut):
     # Put it in the tracking link: /buyurtma/{id}?token=... It is shown only here.
     tracking_token: str
+    # Card transfer: where to send the money (then upload the receipt, or send it to the bot).
+    card_transfer: CardTransferOut | None = None
+    # https://t.me/<store bot>?start=...: status messages in Telegram. None without a bot.
+    telegram_link: str | None = None
 
 
 class OrderListOut(ORMModel):
@@ -149,11 +163,20 @@ class OrderOut(OrderListOut):
     subtotal: int
     delivery_fee: int
     payment_method: PaymentMethod
+    payment_note: str | None
+    paid_at: datetime | None
+    payment_proof_key: str | None = Field(default=None, exclude=True)
     cancel_reason: str | None
     accepted_at: datetime | None
     completed_at: datetime | None
     cancelled_at: datetime | None
     items: list[OrderItemOut]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def has_payment_proof(self) -> bool:
+        """A receipt can be opened at GET .../orders/{id}/payment-proof."""
+        return self.payment_proof_key is not None
 
 
 class OrderStatusIn(BaseModel):
@@ -164,6 +187,22 @@ class OrderStatusIn(BaseModel):
         Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)] | None,
         BeforeValidator(_empty_to_none),
     ] = None  # kept only for cancellation; shown to the buyer
+
+
+class PaymentReviewIn(BaseModel):
+    """The staff's decision on a card-transfer receipt. A refusal needs a reason
+    the buyer will read."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approve: bool
+    note: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=300)] | None = None
+
+    @model_validator(mode="after")
+    def _refusal_has_reason(self) -> Self:
+        if not self.approve and not self.note:
+            raise ValueError("note is required when the receipt is refused")
+        return self
 
 
 class OrderStatsOut(BaseModel):

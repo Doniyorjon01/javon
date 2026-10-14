@@ -22,14 +22,17 @@ from config import VERSION, settings
 from database.config import engine
 from errors import register_exception_handlers
 from middleware import BodySizeLimitMiddleware, RequestContextMiddleware, StorefrontCORSMiddleware
-from routers import catalog, health, inventory, orders, storefront, system, tenants
+from routers import catalog, health, inventory, orders, storefront, system, telegram, tenants
 from services.storage import create_storage
+from services.telegram import TelegramClient
 from utils.log import configure_logging
 from utils.redis_cache import create_redis
 
 # Routes that accept a file: they get MAX_UPLOAD_BYTES instead of the 1 MB JSON limit.
 UPLOAD_PATHS = re.compile(
-    r"^/(tenants/\d+/(logo|catalog/books/\d+/cover|inventory/imports)|system/catalog/books/\d+/cover)$"
+    r"^/(tenants/\d+/(logo|catalog/books/\d+/cover|inventory/imports)"
+    r"|system/catalog/books/\d+/cover"
+    r"|storefront/[a-z0-9-]+/orders/\d+/payment-proof)$"
 )
 
 
@@ -37,11 +40,15 @@ UPLOAD_PATHS = re.compile(
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.redis = create_redis(str(settings.REDIS_URL))
     # None when STORAGE_* is not configured: upload routes then answer 503.
-    if not hasattr(app.state, "storage"):  # tests may install a fake first
+    if not hasattr(app.state, "storage"):  # tests may install fakes first
         app.state.storage = create_storage()
+        app.state.private_storage = create_storage(settings.STORAGE_PRIVATE_BUCKET)
+    if not hasattr(app.state, "telegram"):
+        app.state.telegram = TelegramClient()
     try:
         yield
     finally:
+        await app.state.telegram.aclose()
         await app.state.redis.aclose()
         await engine.dispose()
 
@@ -99,6 +106,9 @@ def create_app() -> FastAPI:
     app.include_router(inventory.router)
     app.include_router(orders.router)
     app.include_router(orders.public_router)
+    app.include_router(telegram.router)
+    app.include_router(telegram.webhook_router)
+    app.include_router(telegram.mini_app_router)
     app.include_router(system.router)
 
     add_pagination(app)

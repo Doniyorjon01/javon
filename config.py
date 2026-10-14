@@ -68,10 +68,38 @@ class Settings(BaseSettings):
     # How browsers reach that bucket (in production: Caddy or a CDN in front of it).
     STORAGE_PUBLIC_URL: str = "http://localhost:9010/javon-media"
 
+    # Private bucket: payment receipts (they show names and card numbers). Never
+    # public; the API streams a receipt only to the store's own staff.
+    STORAGE_PRIVATE_BUCKET: str = "javon-private"
+
     # --- orders -----------------------------------------------------------------
     # Orders one IP may place in one store per window (spam guard; buyers have no account).
     ORDER_RATE_LIMIT: int = 10
     ORDER_RATE_WINDOW_S: int = 600
+    # A card-transfer order with no receipt after this many hours is cancelled and
+    # its books go back on the shelf (they were reserved for the buyer meanwhile).
+    CARD_TRANSFER_HOLD_HOURS: int = 24
+
+    # --- Telegram (stores' own bots) ---------------------------------------------
+    # "webhook" in production (Telegram calls PUBLIC_API_URL); "polling" on a laptop,
+    # where Telegram cannot reach us: run `python -m scripts.telegram_poll`.
+    TELEGRAM_MODE: Literal["webhook", "polling"] = "polling"
+    # Public https address of this API, as Telegram sees it (webhooks).
+    PUBLIC_API_URL: str = "http://localhost:8010"
+    # Fernet keys for bot tokens at rest, comma-separated, newest first (rotation:
+    # put the new key in front, keep the old one until all tokens are re-saved).
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    BOT_TOKEN_KEYS: SecretStr | None = None
+    TELEGRAM_API_URL: str = "https://api.telegram.org"
+    # Where the store's Mini App lives ({slug} is replaced); must be https for Telegram.
+    MINI_APP_URL_TEMPLATE: str = "https://{slug}.javon.uz/"
+    # The store admin panel, for "open the order" buttons; https only (Telegram rule).
+    ADMIN_PANEL_URL: str = "https://javon.uz/admin"
+    # Buyer phone and address in Telegram messages? Telegram's servers are abroad and
+    # personal data must stay in Uzbekistan (law 27-1): off until a lawyer says yes.
+    TELEGRAM_ORDER_CONTACTS: bool = False
+    # A Mini App sign-in (initData) older than this is refused.
+    TELEGRAM_INIT_DATA_MAX_AGE_S: int = 86_400
 
     # --- background worker ------------------------------------------------------
     WORKER_CONCURRENCY: int = 2
@@ -108,6 +136,7 @@ class Settings(BaseSettings):
         "CORS_ORIGIN_REGEX",
         "STORAGE_ACCESS_KEY",
         "STORAGE_SECRET_KEY",
+        "BOT_TOKEN_KEYS",
         mode="before",
     )
     @classmethod
@@ -137,6 +166,10 @@ class Settings(BaseSettings):
                 raise ValueError("SESSION_COOKIE_SECURE must be true in production")
             if self.TELEGRAM_LOGIN_BOT_TOKEN is None:
                 raise ValueError("TELEGRAM_LOGIN_BOT_TOKEN is required in production")
+            if self.BOT_TOKEN_KEYS is None:
+                raise ValueError("BOT_TOKEN_KEYS is required in production")
+            if self.TELEGRAM_MODE != "webhook" or not self.PUBLIC_API_URL.startswith("https://"):
+                raise ValueError("production needs TELEGRAM_MODE=webhook and an https PUBLIC_API_URL")
             secret = self.SECRET_KEY.get_secret_value()
             if len(secret) < 32 or secret == DEV_SECRET_KEY:
                 raise ValueError("SECRET_KEY must be set to 32+ random characters in production")

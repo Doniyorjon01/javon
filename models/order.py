@@ -54,11 +54,15 @@ class DeliveryType(StrEnum):
 
 
 class PaymentMethod(StrEnum):
-    CASH = "cash"  # Click and Payme come with the payments step
+    CASH = "cash"  # paid on handover; the store's cash register gives the fiscal receipt
+    # Transfer to the store's own card (Uzcard/Humo); the buyer sends the bank
+    # app's receipt, the store's staff checks it. Click and Payme come later.
+    CARD_TRANSFER = "card_transfer"
 
 
 class PaymentStatus(StrEnum):
     UNPAID = "unpaid"
+    UNDER_REVIEW = "under_review"  # card transfer: receipt sent, staff to check it
     PAID = "paid"
 
 
@@ -112,6 +116,12 @@ class Order(BaseModel):
         str_enum(PaymentStatus), server_default=PaymentStatus.UNPAID.value
     )
 
+    # Card transfer: the receipt (key in the PRIVATE bucket), the staff's reason if
+    # they did not accept it, and when the money was confirmed.
+    payment_proof_key: Mapped[str | None] = mapped_column(String(255))
+    payment_note: Mapped[str | None] = mapped_column(String(300))
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     # The client's random key for this checkout: a retried request (bad network,
     # double tap) returns the first order instead of creating a second one.
     idempotency_key: Mapped[str] = mapped_column(String(36))
@@ -140,11 +150,21 @@ class Order(BaseModel):
             "subtotal >= 0 AND delivery_fee >= 0 AND total = subtotal + delivery_fee", name="money_adds_up"
         ),
         CheckConstraint("status <> 'cancelled' OR cancelled_at IS NOT NULL", name="cancelled_has_time"),
+        CheckConstraint("payment_status <> 'paid' OR paid_at IS NOT NULL", name="paid_has_time"),
         Index("uq_orders_tenant_number", "tenant_id", "number", unique=True),
         Index("uq_orders_tenant_idempotency_key", "tenant_id", "idempotency_key", unique=True),
         # The admin list: newest first, optionally by status.
         Index("ix_orders_tenant_status_created", "tenant_id", "status", "created_at"),
         Index("ix_orders_tenant_created", "tenant_id", "created_at"),
+        Index(
+            "ix_orders_card_transfer_unpaid",
+            "tenant_id",
+            "updated_at",
+            postgresql_where=text(
+                "payment_method = 'card_transfer' AND payment_status = 'unpaid' "
+                "AND status IN ('new', 'accepted')"
+            ),
+        ),
     )
 
 

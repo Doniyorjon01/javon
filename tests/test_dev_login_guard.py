@@ -67,8 +67,29 @@ def test_production_needs_a_real_secret_key() -> None:
         "DEBUG": False,
         "TELEGRAM_LOGIN_BOT_TOKEN": "1:x",
         "SESSION_COOKIE_SECURE": True,
+        "BOT_TOKEN_KEYS": "ZGV2LW9ubHkta2V5LW5vdC1mb3ItcHJvZHVjdGlvbiE=",
+        "TELEGRAM_MODE": "webhook",
+        "PUBLIC_API_URL": "https://api.javon.uz",
     }
     for weak in ("", "short", "dev-only-secret-change-me-in-production"):
         with pytest.raises(ValueError, match="SECRET_KEY"):
             Settings(**base, SECRET_KEY=weak)
     assert Settings(**base, SECRET_KEY="x" * 64).SECRET_KEY.get_secret_value() == "x" * 64
+
+
+def test_production_needs_bot_token_keys_and_webhooks() -> None:
+    base = {
+        "_env_file": None,
+        "DATABASE_URL": "postgresql+asyncpg://a:b@localhost/x",
+        "ENV": "production",
+        "DEBUG": False,
+        "TELEGRAM_LOGIN_BOT_TOKEN": "1:x",
+        "SESSION_COOKIE_SECURE": True,
+        "SECRET_KEY": "x" * 64,
+    }
+    with pytest.raises(ValueError, match="BOT_TOKEN_KEYS"):
+        Settings(**base, TELEGRAM_MODE="webhook", PUBLIC_API_URL="https://api.javon.uz")
+    with pytest.raises(ValueError, match="TELEGRAM_MODE"):
+        Settings(**base, BOT_TOKEN_KEYS="k", TELEGRAM_MODE="polling", PUBLIC_API_URL="https://api.javon.uz")
+    with pytest.raises(ValueError, match="TELEGRAM_MODE"):
+        Settings(**base, BOT_TOKEN_KEYS="k", TELEGRAM_MODE="webhook", PUBLIC_API_URL="http://api.javon.uz")

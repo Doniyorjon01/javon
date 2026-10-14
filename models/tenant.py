@@ -116,6 +116,12 @@ class Tenant(BaseModel):
     delivery_fee: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
     free_delivery_from: Mapped[int | None] = mapped_column(BigInteger)  # order subtotal; NULL = never free
     delivery_area: Mapped[str | None] = mapped_column(String(300))  # "Toshkent shahri ichida", free text
+    # How buyers may pay: cash on handover and/or a transfer to the store's card
+    # (shown to the buyer at checkout; the buyer sends the receipt, staff check it).
+    cash_enabled: Mapped[bool] = mapped_column(server_default=true())
+    card_transfer_enabled: Mapped[bool] = mapped_column(server_default=false())
+    card_number: Mapped[str | None] = mapped_column(String(16))
+    card_holder: Mapped[str | None] = mapped_column(String(80))
 
     # Last order number given out; orders are numbered 1, 2, 3... per store.
     # Internal: changed only by db_order.create_order, never sent to clients.
@@ -141,6 +147,12 @@ class Tenant(BaseModel):
         CheckConstraint("delivery_fee >= 0", name="delivery_fee_not_negative"),
         CheckConstraint("free_delivery_from > 0", name="free_delivery_from_positive"),
         CheckConstraint("order_seq >= 0", name="order_seq_not_negative"),
+        CheckConstraint("cash_enabled OR card_transfer_enabled", name="some_payment"),
+        CheckConstraint(r"card_number ~ '^[0-9]{16}$'", name="card_number_format"),
+        CheckConstraint(
+            "NOT card_transfer_enabled OR (card_number IS NOT NULL AND card_holder IS NOT NULL)",
+            name="card_transfer_has_card",
+        ),
     )
 
 

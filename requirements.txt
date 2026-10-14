@@ -12,3 +12,7 @@ boto3==1.43.111
 pillow==12.3.0
 openpyxl==3.1.5
 defusedxml==0.7.1
+# Telegram bot tokens are stored encrypted (utils/crypto.py)
+cryptography==50.0.2
+# Telegram Bot API client (services/telegram.py)
+httpx==0.28.1

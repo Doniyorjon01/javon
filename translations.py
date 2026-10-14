@@ -81,6 +81,24 @@ class Msg(StrEnum):
     ORDER_STATUS_INVALID = "order_status_invalid"
     TOO_MANY_REQUESTS = "too_many_requests"
 
+    # --- payments -----------------------------------------------------------
+    PAYMENT_METHOD_UNAVAILABLE = "payment_method_unavailable"
+    PAYMENT_OPTION_REQUIRED = "payment_option_required"
+    CARD_DETAILS_REQUIRED = "card_details_required"
+    ORDER_NOT_PAID = "order_not_paid"
+    ORDER_NOT_PAID_IN_TIME = "order_not_paid_in_time"
+    PAYMENT_PROOF_NOT_EXPECTED = "payment_proof_not_expected"
+    PAYMENT_PROOF_NOT_FOUND = "payment_proof_not_found"
+    PAYMENT_NOT_UNDER_REVIEW = "payment_not_under_review"
+
+    # --- telegram -----------------------------------------------------------
+    BOT_TOKEN_INVALID = "bot_token_invalid"  # noqa: S105 — a message code
+    BOT_IN_USE = "bot_in_use"
+    BOT_SETUP_FAILED = "bot_setup_failed"
+    BOT_NOT_CONNECTED = "bot_not_connected"
+    BOT_GROUP_NOT_LINKED = "bot_group_not_linked"
+    TELEGRAM_UNAVAILABLE = "telegram_unavailable"
+
 
 MESSAGES: dict[Msg, dict[Lang, str]] = {
     Msg.UNKNOWN_ERROR: {
@@ -360,6 +378,76 @@ MESSAGES: dict[Msg, dict[Lang, str]] = {
         Lang.uz: "Juda koʻp soʻrov. Birozdan keyin qayta urinib koʻring.",
         Lang.ru: "Слишком много запросов. Попробуйте чуть позже.",
         Lang.en: "Too many requests. Please try again a little later.",
+    },
+    Msg.PAYMENT_METHOD_UNAVAILABLE: {
+        Lang.uz: "Bu doʻkonda bunday toʻlov usuli yoʻq.",
+        Lang.ru: "Этот способ оплаты в магазине недоступен.",
+        Lang.en: "This store does not accept this payment method.",
+    },
+    Msg.PAYMENT_OPTION_REQUIRED: {
+        Lang.uz: "Naqd yoki kartaga oʻtkazmadan kamida bittasi yoqilgan boʻlishi kerak.",
+        Lang.ru: "Должна быть включена оплата наличными или переводом на карту.",
+        Lang.en: "Turn on cash, card transfer or both.",
+    },
+    Msg.CARD_DETAILS_REQUIRED: {
+        Lang.uz: "Kartaga oʻtkazma uchun karta raqami va egasining ismini kiriting.",
+        Lang.ru: "Для перевода на карту укажите номер карты и имя владельца.",
+        Lang.en: "Card transfer needs the card number and the holder's name.",
+    },
+    Msg.ORDER_NOT_PAID: {
+        Lang.uz: "Buyurtma hali toʻlanmagan: avval toʻlovni tasdiqlang.",
+        Lang.ru: "Заказ ещё не оплачен: сначала подтвердите оплату.",
+        Lang.en: "The order is not paid yet: confirm the payment first.",
+    },
+    Msg.ORDER_NOT_PAID_IN_TIME: {
+        Lang.uz: "Toʻlov oʻz vaqtida qilinmadi.",
+        Lang.ru: "Оплата не поступила вовремя.",
+        Lang.en: "The payment did not arrive in time.",
+    },
+    Msg.PAYMENT_PROOF_NOT_EXPECTED: {
+        Lang.uz: "Bu buyurtma uchun chek kutilmayapti.",
+        Lang.ru: "По этому заказу чек не ожидается.",
+        Lang.en: "No receipt is expected for this order.",
+    },
+    Msg.PAYMENT_PROOF_NOT_FOUND: {
+        Lang.uz: "Bu buyurtmaga chek yuborilmagan.",
+        Lang.ru: "Чек по этому заказу не отправлялся.",
+        Lang.en: "No receipt was sent for this order.",
+    },
+    Msg.PAYMENT_NOT_UNDER_REVIEW: {
+        Lang.uz: "Tekshirilishi kerak boʻlgan chek yoʻq.",
+        Lang.ru: "Нет чека, ожидающего проверки.",
+        Lang.en: "There is no receipt waiting for review.",
+    },
+    Msg.BOT_TOKEN_INVALID: {
+        Lang.uz: "Bot tokeni notoʻgʻri. Uni @BotFather'dan qayta nusxalang.",
+        Lang.ru: "Неверный токен бота. Скопируйте его заново из @BotFather.",
+        Lang.en: "The bot token is wrong. Copy it again from @BotFather.",
+    },
+    Msg.BOT_IN_USE: {
+        Lang.uz: "Bu bot boshqa doʻkonga ulangan.",
+        Lang.ru: "Этот бот уже подключён к другому магазину.",
+        Lang.en: "This bot is already connected to another store.",
+    },
+    Msg.BOT_SETUP_FAILED: {
+        Lang.uz: "Telegram botni sozlashga ruxsat bermadi: {}",
+        Lang.ru: "Telegram не позволил настроить бота: {}",
+        Lang.en: "Telegram refused to set up the bot: {}",
+    },
+    Msg.BOT_NOT_CONNECTED: {
+        Lang.uz: "Doʻkonga bot ulanmagan.",
+        Lang.ru: "К магазину не подключён бот.",
+        Lang.en: "No bot is connected to this store.",
+    },
+    Msg.BOT_GROUP_NOT_LINKED: {
+        Lang.uz: "Bot hali guruhga ulanmagan. «Guruhga qoʻshish» havolasidan foydalaning.",
+        Lang.ru: "Бот ещё не подключён к группе. Воспользуйтесь ссылкой «Добавить в группу».",
+        Lang.en: "The bot is not linked to a group yet. Use the “add to group” link.",
+    },
+    Msg.TELEGRAM_UNAVAILABLE: {
+        Lang.uz: "Telegram hozir javob bermayapti. Birozdan keyin qayta urinib koʻring.",
+        Lang.ru: "Telegram сейчас не отвечает. Попробуйте чуть позже.",
+        Lang.en: "Telegram is not answering right now. Please try again shortly.",
     },
 }
 

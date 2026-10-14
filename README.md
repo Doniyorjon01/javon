@@ -15,11 +15,12 @@ alembic/  tests/  scripts/
 | --- | --- | --- |
 | `postgres` | Baza | 5440 |
 | `redis` | Kesh, so'rov chegaralari | 6385 |
-| `storage` | SeaweedFS: muqova va logolar (S3 API) | 9010 |
-| `storage-init` | Bucket yaratadi va ommaviy o'qishga ochadi, keyin to'xtaydi | — |
+| `storage` | SeaweedFS: muqova, logolar va to'lov cheklari (S3 API) | 9010 |
+| `storage-init` | `javon-media` (ommaviy o'qiladi) va `javon-private` (yopiq, cheklar) bucket'larini yaratadi, keyin to'xtaydi | — |
 | `migrate` | `alembic upgrade head`, keyin to'xtaydi | — |
 | `backend` | API | 8010 |
-| `worker` | Fon vazifalari: Excel import, buyurtma xabarlari | — |
+| `worker` | Fon vazifalari: Excel import, Telegram xabarlari, to'lanmagan karta buyurtmalarini bekor qilish | — |
+| `telegram-poll` | Faqat lokal (`--profile telegram`): do'kon botlarining xabarlarini `getUpdates` bilan o'qiydi | — |
 
 Portlar shu kompyuterdagi boshqa loyihalar (annur, saxovat) bilan to'qnashmaydigan qilib tanlangan.
 
@@ -47,6 +48,21 @@ Tekshirish:
 
 To'xtatish: `docker compose down` (ma'lumotlar volume'larda qoladi).
 
+## Telegram botni lokal sinash
+
+Har do'konning o'z boti bor: egasi @BotFather'da bot yaratib, tokenini admin panelda
+(`PUT /tenants/{id}/telegram`) kiritadi. Lokal kompyuterda ommaviy https manzil yo'q, shuning uchun
+botlar webhook emas, polling bilan ishlaydi (`TELEGRAM_MODE=polling`, standart):
+
+```bash
+docker compose --profile telegram up -d       # telegram-poll servisi ham ishga tushadi
+# yoki PyCharm'dan: python -m scripts.telegram_poll
+```
+
+Serverda `TELEGRAM_MODE=webhook`, `PUBLIC_API_URL=https://api.javon.uz` va `BOT_TOKEN_KEYS` majburiy;
+`telegram-poll` ishga tushirilmaydi. Sinov uchun alohida bot oching: bitta bot bir vaqtda faqat
+bitta joyda (webhook yoki polling) ishlaydi.
+
 ## PyCharm'dan ishga tushirish
 
 API'ni Docker'siz, o'z kompyuteringizda ishga tushirish (debugger bilan):
@@ -56,6 +72,7 @@ docker compose up -d postgres redis storage storage-init   # baza, Redis va fayl
 alembic upgrade head                                       # migratsiyalar (MIGRATION_DATABASE_URL bilan)
 uvicorn main:app --reload --port 8011
 python -m workers.main                                     # boshqa terminalda: fon vazifalari
+python -m scripts.telegram_poll                             # kerak bo'lsa: do'kon botlari (polling)
 ```
 
 PyCharm'da interpreter sifatida `.venv/bin/python` ni tanlang; Run configuration: modul `uvicorn`,
@@ -70,7 +87,8 @@ parametrlar `main:app --reload --port 8011`, ishchi papka — loyiha ildizi.
 | `alembic revision --autogenerate -m "..."` | Yangi migratsiya |
 | `alembic upgrade head` | Migratsiyalarni qo'llash |
 | `python -m scripts.seed_catalog kitoblar.csv` | Katalogga haqiqiy kitoblar ro'yxatini CSV'dan yuklash (`--dry-run` bilan avval tekshiring). CSV fayllar git'ga qo'shilmaydi |
-| `python -m scripts.storage_init` | Bucket'ni yaratish va ommaviy o'qishga ochish (qayta ishga tushirsa zarar qilmaydi) |
+| `python -m scripts.storage_init` | Bucket'larni yaratish: ommaviy `javon-media` va yopiq `javon-private` (qayta ishga tushirsa zarar qilmaydi) |
+| `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` | `BOT_TOKEN_KEYS` uchun kalit |
 | `ruff check . && ruff format --check .` | Ruff tekshiruvi |
 | `ruff check --fix . && ruff format .` | Formatlash |
 | `pytest -q` | Testlar |
@@ -83,4 +101,5 @@ qaytadan yaratish kerak bo'lsa: `docker compose down -v`. Bu barcha lokal ma'lum
 Muqova va logolar SeaweedFS'da saqlanadi (Apache-2.0, faol rivojlanadi). Dastlabki rejadagi MinIO
 2025-yil oktyabridan community versiyasini chiqarmay qo'ydi, 2026-yil aprelda repozitoriysi arxivlandi.
 Kod oddiy S3 API (boto3) bilan ishlaydi, shuning uchun omborni sozlamalar orqali almashtirish mumkin.
-Bucket ommaviy o'qiladi, lekin ro'yxatini ko'rish, fayl yozish va o'chirish faqat kalit bilan.
+`javon-media` ommaviy o'qiladi, lekin ro'yxatini ko'rish, fayl yozish va o'chirish faqat kalit bilan.
+`javon-private` (to'lov cheklari) hech kimga ochiq emas: chekni faqat do'kon xodimi API orqali ko'radi.

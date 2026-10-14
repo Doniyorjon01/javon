@@ -66,6 +66,13 @@ StoreName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2
 Address = Annotated[str, StringConstraints(max_length=255)]
 DeliveryArea = Annotated[str, StringConstraints(max_length=300)]
 Money = Annotated[int, Field(ge=0, le=MAX_PRICE)]  # tiyin
+# "8600 1234 5678 9012" -> "8600123456789012" (Uzcard / Humo: 16 digits)
+CardNumber = Annotated[
+    str,
+    BeforeValidator(lambda v: re.sub(r"[\s-]", "", v) if isinstance(v, str) else v),
+    StringConstraints(pattern=r"^[0-9]{16}$"),
+]
+CardHolder = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=80)]
 PositiveMoney = Annotated[int, Field(gt=0, le=MAX_PRICE)]
 HexColor = Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$")]
 ThemeKey = Annotated[str, StringConstraints(pattern=r"^[a-z0-9-]{1,32}$")]
@@ -133,6 +140,12 @@ class TenantUpdate(BaseModel):
     free_delivery_from: PositiveMoney | None = None  # order subtotal; None: delivery is never free
     delivery_area: Annotated[DeliveryArea | None, BeforeValidator(_empty_to_none)] = None
 
+    # Payment: cash on handover and/or a transfer to the store's card.
+    cash_enabled: bool | None = None
+    card_transfer_enabled: bool | None = None
+    card_number: Annotated[CardNumber | None, BeforeValidator(_empty_to_none)] = None
+    card_holder: Annotated[CardHolder | None, BeforeValidator(_empty_to_none)] = None
+
     @field_validator("languages")
     @classmethod
     def _unique_languages(cls, value: list[Lang] | None) -> list[Lang] | None:
@@ -142,7 +155,13 @@ class TenantUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _not_null(self) -> Self:
-        for name in ("pickup_enabled", "delivery_enabled", "delivery_fee"):
+        for name in (
+            "pickup_enabled",
+            "delivery_enabled",
+            "delivery_fee",
+            "cash_enabled",
+            "card_transfer_enabled",
+        ):
             if name in self.model_fields_set and getattr(self, name) is None:
                 raise ValueError(f"{name} cannot be empty")
         return self
@@ -176,6 +195,8 @@ class StorefrontOut(ORMModel):
     delivery_fee: int
     free_delivery_from: int | None
     delivery_area: str | None
+    cash_enabled: bool
+    card_transfer_enabled: bool
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -186,6 +207,8 @@ class StorefrontOut(ORMModel):
 
 class TenantOut(StorefrontOut):
     id: int
+    card_number: str | None  # shown to buyers only after a card-transfer checkout
+    card_holder: str | None
     status: TenantStatus
     plan: Plan
     trial_ends_at: datetime | None

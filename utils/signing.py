@@ -31,3 +31,41 @@ def order_token(tenant_id: int, order_id: int) -> str:
 
 def check_order_token(tenant_id: int, order_id: int, token: str) -> bool:
     return hmac.compare_digest(order_token(tenant_id, order_id), token)
+
+
+# --------------------------------------------------------------------------- #
+# Telegram deep links
+# --------------------------------------------------------------------------- #
+# Telegram start parameters allow only [A-Za-z0-9_-], at most 64 characters.
+_GROUP_PREFIX = "g"
+_ORDER_PREFIX = "o"
+
+
+def group_link_code(tenant_id: int) -> str:
+    """t.me/<bot>?startgroup=<code>: adding the bot to a group with it links the group."""
+    return f"{_GROUP_PREFIX}{tenant_id}_{_sign(f'telegram-group:{tenant_id}')[:16]}"
+
+
+def parse_group_link_code(code: str) -> int | None:
+    if not code.startswith(_GROUP_PREFIX) or "_" not in code:
+        return None
+    tenant_part, _, _ = code[1:].partition("_")
+    if not tenant_part.isdigit():
+        return None
+    tenant_id = int(tenant_part)
+    return tenant_id if hmac.compare_digest(group_link_code(tenant_id), code) else None
+
+
+def order_start_code(tenant_id: int, order_id: int) -> str:
+    """t.me/<bot>?start=<code>: the buyer of a web order gets its updates in Telegram."""
+    return f"{_ORDER_PREFIX}{order_id}_{order_token(tenant_id, order_id)}"
+
+
+def parse_order_start_code(tenant_id: int, code: str) -> int | None:
+    if not code.startswith(_ORDER_PREFIX) or "_" not in code:
+        return None
+    order_part, _, token = code[1:].partition("_")
+    if not order_part.isdigit():
+        return None
+    order_id = int(order_part)
+    return order_id if check_order_token(tenant_id, order_id, token) else None

@@ -26,6 +26,7 @@ from models.order import (
     PaymentMethod,
     PaymentStatus,
 )
+from models.telegram import BotStatus, TelegramBot
 from models.tenant import MemberRole, Membership, Plan, Tenant, TenantStatus
 from models.user import User, UserSession
 
@@ -39,6 +40,7 @@ __all__ = [
     "BookScript",
     "BookSource",
     "BookStatus",
+    "BotStatus",
     "Customer",
     "DeliveryType",
     "ImportStatus",
@@ -56,6 +58,7 @@ __all__ = [
     "PaymentStatus",
     "Plan",
     "Publisher",
+    "TelegramBot",
     "Tenant",
     "TenantStatus",
     "User",

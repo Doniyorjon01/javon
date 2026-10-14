@@ -57,6 +57,8 @@ class ImageSpec:
 
 COVER_SPEC = ImageSpec(widths={"s": 160, "m": 320, "l": 640}, min_side=120)
 LOGO_SPEC = ImageSpec(widths={"s": 128, "l": 512}, min_side=64)
+# Payment receipts: bank-app screenshots, often long and narrow; one readable size.
+RECEIPT_SPEC = ImageSpec(widths={"l": 1600}, min_side=200, max_aspect=5.0)
 
 
 def variant_key(base_key: str, name: str) -> str:

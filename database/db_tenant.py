@@ -60,6 +60,11 @@ async def get_membership(
     return (row.role, row.status) if row else None
 
 
+async def get_active_tenant_ids(db: AsyncSession) -> list[int]:
+    """For the worker's periodic tasks."""
+    return list(await db.scalars(select(Tenant.id).where(Tenant.is_active.is_(True)).order_by(Tenant.id)))
+
+
 async def get_storefront_tenant(db: AsyncSession, slug: str, lang: Lang = DEFAULT_LANG) -> Tenant:
     """The store a buyer is looking at. Stores that are not launched yet, suspended
     or deleted look exactly like missing ones."""
@@ -166,6 +171,12 @@ async def update_tenant(db: AsyncSession, pk: int, data: TenantUpdate, lang: Lan
     if not (tenant.pickup_enabled or tenant.delivery_enabled):
         await db.rollback()
         raise generate_error(Msg.FULFILMENT_REQUIRED, lang)
+    if not (tenant.cash_enabled or tenant.card_transfer_enabled):
+        await db.rollback()
+        raise generate_error(Msg.PAYMENT_OPTION_REQUIRED, lang)
+    if tenant.card_transfer_enabled and not (tenant.card_number and tenant.card_holder):
+        await db.rollback()
+        raise generate_error(Msg.CARD_DETAILS_REQUIRED, lang)
     await db.commit()
     await db.refresh(tenant)
     return tenant
