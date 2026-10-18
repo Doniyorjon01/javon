@@ -1,0 +1,27 @@
+# Test mode on a laptop: Cloudflare Tunnel instead of public ports 80/443.
+# Used on top of docker-compose.prod.yml (see COMPOSE_FILE in .env).
+# Moving to a real server: drop this file and point DNS at the server IP.
+
+services:
+  caddy:
+    ports: !reset []
+    volumes: !override
+      - ./deploy/Caddyfile.tunnel:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.1
+    command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    user: "1000:1000"  # owner of the credentials file on the host
+    volumes:
+      - ./deploy/cloudflared.yml:/etc/cloudflared/config.yml:ro
+      - ${CLOUDFLARED_CREDENTIALS:?set in .env}:/etc/cloudflared/credentials.json:ro
+    depends_on:
+      - caddy
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    restart: always

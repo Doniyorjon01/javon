@@ -1,0 +1,59 @@
+# Test mode behind Cloudflare Tunnel (docker-compose.tunnel.yml).
+# TLS ends at Cloudflare; Caddy speaks plain HTTP inside the Compose network
+# and keeps X-Forwarded-Proto: https / the client IP sent by cloudflared,
+# so the backend still sees https (Secure cookies, redirects, webhook URLs).
+
+{
+	auto_https off
+	servers {
+		trusted_proxies static private_ranges
+		client_ip_headers Cf-Connecting-Ip X-Forwarded-For
+	}
+}
+
+(common) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	log {
+		output stdout
+		format json
+	}
+}
+
+http://api.{$BASE_DOMAIN} {
+	import common
+	@internal path /internal/*
+	respond @internal 404
+	reverse_proxy backend:8000 {
+		health_uri /health
+	}
+}
+
+http://media.{$BASE_DOMAIN} {
+	import common
+	@public {
+		method GET HEAD
+		path /javon-media/*
+	}
+	handle @public {
+		header Cache-Control "public, max-age=31536000, immutable"
+		reverse_proxy storage:8333
+	}
+	respond 404
+}
+
+http://{$BASE_DOMAIN}, http://www.{$BASE_DOMAIN} {
+	import common
+	reverse_proxy {$FRONTEND_UPSTREAM:frontend:3000}
+}
+
+# Every other name: store subdomains.
+:80 {
+	import common
+	reverse_proxy {$FRONTEND_UPSTREAM:frontend:3000}
+}
