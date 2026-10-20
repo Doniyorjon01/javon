@@ -37,6 +37,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -86,23 +87,39 @@ PACKAGE_CODE_PATTERN = r"^[0-9]{1,20}$"
 
 
 class Author(BaseModel):
-    """search_key is unique: "Abdulla Qodiriy" and "Абдулла Қодирий" are one author."""
+    """
+    One row per spelling ALPHABET: "Abdulla Qodiriy" (latn) and "Абдулла Қодирий"
+    (cyrl) are two rows with the same search_key, so a Cyrillic edition shows its
+    author in Cyrillic, and a search for either spelling finds both.
+    """
 
     __tablename__ = "authors"
 
     name: Mapped[str] = mapped_column(String(NAME_MAX_LENGTH))
-    search_key: Mapped[str] = mapped_column(String(NAME_MAX_LENGTH * 2), unique=True)
+    search_key: Mapped[str] = mapped_column(String(NAME_MAX_LENGTH * 2))
+    script: Mapped[BookScript] = mapped_column(str_enum(BookScript), server_default=BookScript.LATN.value)
 
-    __table_args__ = (CheckConstraint("search_key <> ''", name="search_key_not_empty"),)
+    __table_args__ = (
+        CheckConstraint("search_key <> ''", name="search_key_not_empty"),
+        enum_check("script", BookScript, "author_script"),
+        UniqueConstraint("search_key", "script", name="uq_authors_search_key_script"),
+    )
 
 
 class Publisher(BaseModel):
+    """Like Author: one row per alphabet ("Sharq" and "Шарқ")."""
+
     __tablename__ = "publishers"
 
     name: Mapped[str] = mapped_column(String(NAME_MAX_LENGTH))
-    search_key: Mapped[str] = mapped_column(String(NAME_MAX_LENGTH * 2), unique=True)
+    search_key: Mapped[str] = mapped_column(String(NAME_MAX_LENGTH * 2))
+    script: Mapped[BookScript] = mapped_column(str_enum(BookScript), server_default=BookScript.LATN.value)
 
-    __table_args__ = (CheckConstraint("search_key <> ''", name="search_key_not_empty"),)
+    __table_args__ = (
+        CheckConstraint("search_key <> ''", name="search_key_not_empty"),
+        enum_check("script", BookScript, "publisher_script"),
+        UniqueConstraint("search_key", "script", name="uq_publishers_search_key_script"),
+    )
 
 
 class BookAuthor(Base):

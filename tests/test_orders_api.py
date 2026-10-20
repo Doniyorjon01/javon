@@ -91,6 +91,28 @@ async def test_pickup_order_end_to_end(client: AsyncClient, db: AsyncSession, sh
     assert full["customer_phone"] == "+998901234567"
 
 
+async def test_my_orders_statuses(client: AsyncClient, shop: tuple) -> None:
+    tenant, owner, items = shop
+    first = (await client.post("/storefront/varaq/orders", json=checkout((items["kunlar"], 1)))).json()
+    second = (await client.post("/storefront/varaq/orders", json=checkout((items["chayon"], 1)))).json()
+    await sign_in(client, owner)
+    await client.post(f"/tenants/{tenant.id}/orders/{first['id']}/status", json={"status": "accepted"})
+    client.cookies.clear()
+
+    refs = [
+        {"id": first["id"], "token": first["tracking_token"]},
+        {"id": second["id"], "token": "x" * 22},  # wrong token: left out, like a missing order
+        {"id": 999_999, "token": first["tracking_token"]},
+    ]
+    resp = await client.post("/storefront/varaq/orders/statuses", json={"orders": refs})
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == [{"id": first["id"], "number": 1, "status": "accepted", "payment_status": "unpaid"}]
+
+    too_many = [{"id": i, "token": "x" * 22} for i in range(1, 52)]
+    resp = await client.post("/storefront/varaq/orders/statuses", json={"orders": too_many})
+    assert resp.status_code == 422
+
+
 async def test_delivery_fee_and_free_delivery(client: AsyncClient, db: AsyncSession, shop: tuple) -> None:
     tenant, _, items = shop
     body = checkout((items["kunlar"], 1), delivery_type="delivery", address="Chilonzor 9, 12-uy")

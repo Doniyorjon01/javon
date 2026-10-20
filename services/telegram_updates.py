@@ -84,7 +84,7 @@ class StoreInfo:
             card_holder=tenant.card_holder,
             lang=db_telegram.store_lang(tenant),
             closed=state in CLOSED_STATES,
-            launched=tenant.launched_at is not None,
+            launched=tenant.launched_at is not None and tenant.paused_at is None,
         )
 
 

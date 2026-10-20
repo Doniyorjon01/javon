@@ -33,10 +33,7 @@ def _isbn10_is_valid(isbn10: str) -> bool:
 
 def normalize_isbn(raw: str) -> str | None:
     """ISBN-13 digits, or None if `raw` is not a valid ISBN-10 or ISBN-13."""
-    value = _SEPARATORS.sub("", raw).upper()
-    if value.startswith("ISBN"):
-        value = value.removeprefix("ISBN").lstrip(":")
-
+    value = _clean(raw)
     if re.fullmatch(r"97[89][0-9]{10}", value):
         return value if _isbn13_check_digit(value[:12]) == int(value[12]) else None
 
@@ -44,6 +41,27 @@ def normalize_isbn(raw: str) -> str | None:
         first12 = "978" + value[:9]
         return first12 + str(_isbn13_check_digit(first12))
 
+    return None
+
+
+def _clean(raw: str) -> str:
+    value = _SEPARATORS.sub("", raw).upper()
+    return value.removeprefix("ISBN").lstrip(":") if value.startswith("ISBN") else value
+
+
+def expected_check_digit(raw: str) -> str | None:
+    """
+    For an ISBN whose only fault is its last digit: the digit it should end with
+    ("9789943551234" -> "8"), so the message can say exactly what is wrong.
+    None when the value is not ISBN-shaped at all (wrong length, letters...).
+    """
+    value = _clean(raw)
+    if re.fullmatch(r"97[89][0-9]{10}", value):
+        return str(_isbn13_check_digit(value[:12]))
+    if re.fullmatch(r"[0-9]{9}[0-9X]", value):
+        total = sum((10 - i) * int(d) for i, d in enumerate(value[:9]))
+        check = (11 - total % 11) % 11
+        return "X" if check == 10 else str(check)
     return None
 
 

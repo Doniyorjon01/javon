@@ -99,6 +99,9 @@ class Tenant(BaseModel):
     # NULL until the owner presses "launch" at the end of the setup wizard; the
     # storefront is public only after that (db_tenant.get_storefront_tenant).
     launched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The owner closed the storefront for a while (holiday, stocktake): set by
+    # POST /tenants/{id}/pause, cleared by /resume. The admin panel keeps working.
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # --- look (wizard step "Ko'rinish") ---
     theme: Mapped[str] = mapped_column(String(32), server_default="classic")

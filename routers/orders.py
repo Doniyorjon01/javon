@@ -12,6 +12,10 @@ POST /storefront/{slug}/orders                   checkout. 201 with tracking_tok
                                                  that Telegram chat. card_transfer orders get
                                                  the card to pay to in the answer.
 GET  /storefront/{slug}/orders/{order_id}?token=  the tracking page
+POST /storefront/{slug}/orders/statuses           {"orders": [{"id", "token"}, ...]} (up to 50):
+                                                 the status of each order the browser
+                                                 remembers ("My orders"); an id with a
+                                                 wrong token is simply left out
 POST /storefront/{slug}/orders/{order_id}/payment-proof?token=
                                                  multipart "file": the bank app's receipt for
                                                  a card transfer (kept in the PRIVATE bucket)
@@ -53,7 +57,9 @@ from schemas.order import (
     OrderListOut,
     OrderOut,
     OrderStatsOut,
+    OrderStatusesIn,
     OrderStatusIn,
+    OrderStatusOut,
     OrderTrackOut,
     PaymentReviewIn,
 )
@@ -138,6 +144,16 @@ def _check_token(tenant_id: int, order_id: int, token: str, lang: Lang) -> None:
     # A wrong token looks exactly like a missing order.
     if not check_order_token(tenant_id, order_id, token):
         raise generate_error(Msg.ORDER_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND)
+
+
+@public_router.post("/statuses", response_model=list[OrderStatusOut])
+async def order_statuses(
+    data: OrderStatusesIn,
+    tenant: Tenant = Depends(get_storefront_tenant),
+    db: AsyncSession = Depends(get_pg_db),
+) -> list[Order]:
+    ids = [ref.id for ref in data.orders if check_order_token(tenant.id, ref.id, ref.token)]
+    return await db_order.get_statuses(db, tenant.id, ids)
 
 
 @public_router.post(

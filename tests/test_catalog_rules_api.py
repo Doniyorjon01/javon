@@ -90,9 +90,7 @@ async def test_isbn_less_duplicate_points_to_the_existing_book(client: AsyncClie
     await add_book(client, store, **{**SARIQ_DEV, "publisher": "Sharq"})
 
 
-async def test_own_pending_duplicate_is_caught_other_stores_pending_is_not(
-    client: AsyncClient, db: AsyncSession
-) -> None:
+async def test_pending_duplicate_is_caught_for_every_store(client: AsyncClient, db: AsyncSession) -> None:
     store, owner = await store_with_owner(db, "varaq")
     other, other_owner = await store_with_owner(db, "boshqa")
 
@@ -102,9 +100,11 @@ async def test_own_pending_duplicate_is_caught_other_stores_pending_is_not(
     assert again.status_code == 409
     assert again.json()["detail"]["book_id"] == mine["id"]
 
-    # The other store cannot see our pending book, so it must not be told its id.
+    # Pending books are shared: the other store is pointed at the same entry.
     await sign_in(client, other_owner)
-    await add_book(client, other, **SARIQ_DEV)
+    theirs = await client.post(f"/tenants/{other.id}/catalog/books", json=SARIQ_DEV)
+    assert theirs.status_code == 409
+    assert theirs.json()["detail"]["book_id"] == mine["id"]
 
 
 # --------------------------------------------------------------------------- #

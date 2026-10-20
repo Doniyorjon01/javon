@@ -24,6 +24,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from translations import Msg, translate
 from utils.i18n import Lang, get_lang
+from utils.validation import explain
 
 logger = logging.getLogger(__name__)
 
@@ -79,19 +80,20 @@ async def _http_exception_handler(request: Request, exc: StarletteHTTPException)
 
 
 async def _validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """
+    422 with every problem as a sentence in the request's language
+    (utils/validation.explain). "message" is the first problem, so a client that
+    shows only the message still shows something useful. "input" (it may hold a
+    phone number or an address), "ctx" and pydantic's "url" are not sent back.
+    """
     lang = get_lang(request)
-    errors = [
-        # "input" echoes what the client sent (it may hold a phone number or an
-        # address) and "url" points at pydantic docs; neither helps the frontend.
-        {k: v for k, v in err.items() if k not in ("input", "url")}
-        for err in exc.errors()
-    ]
+    errors = [{"type": err["type"], "loc": err["loc"], "msg": explain(err, lang)} for err in exc.errors()]
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         content={
             "detail": {
                 "code": Msg.VALIDATION_ERROR.value,
-                "message": translate(Msg.VALIDATION_ERROR, lang),
+                "message": errors[0]["msg"] if errors else translate(Msg.VALIDATION_ERROR, lang),
                 "errors": jsonable_encoder(errors),
             }
         },

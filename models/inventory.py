@@ -71,6 +71,13 @@ class InventoryItem(BaseModel):
     )
 
 
+class QuantityMode(StrEnum):
+    """What an Excel import does with the "quantity" column of a book already on the shelf."""
+
+    ADD = "add"  # a delivery: "2 arrived" -> stock + 2 (the default)
+    SET = "set"  # a stocktake: "there are 2 now" -> stock = 2
+
+
 class ImportStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -91,6 +98,9 @@ class InventoryImport(BaseModel):
     # report is what the store needs afterwards, not the file.
     file_data: Mapped[bytes | None] = mapped_column(LargeBinary)
     lang: Mapped[str] = mapped_column(String(2), server_default="uz")  # language of the report
+    quantity_mode: Mapped[QuantityMode] = mapped_column(
+        str_enum(QuantityMode), server_default=QuantityMode.ADD.value
+    )
     total_rows: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     processed_rows: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     # {"books_matched": n, "books_created": n, "items_added": n, "items_updated": n,
@@ -100,6 +110,7 @@ class InventoryImport(BaseModel):
 
     __table_args__ = (
         enum_check("status", ImportStatus, "import_status"),
+        enum_check("quantity_mode", QuantityMode, "import_quantity_mode"),
         CheckConstraint("processed_rows >= 0 AND total_rows >= 0", name="row_counts"),
         Index("ix_inventory_imports_tenant_created", "tenant_id", "created_at"),
     )

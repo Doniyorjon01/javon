@@ -8,12 +8,15 @@ Turns an uploaded sheet (services/excel.py) into shelf rows, one row at a time:
   2. not in the catalog -> submit it as a new pending book (source "import",
      its own pending limit, MAX_PENDING_BOOKS_FROM_IMPORT) — the store can sell
      it right away, as with a book added by hand;
-  3. put it on the shelf, or update the shelf row: price and quantity are SET
-     to what the file says.
+  3. put it on the shelf, or update the shelf row: the price is set; the
+     quantity is ADDED ("2 arrived", the default) or SET ("there are 2 now"),
+     as the owner chose when uploading (InventoryImport.quantity_mode).
 
-Each row commits on its own, so one bad row never undoes the others, and
-running the same file twice gives the same shelf (safe to retry). Problems are
-collected per line in the report, in the language of the person who uploaded.
+Each row commits on its own, together with the import's progress counter, so
+one bad row never undoes the others, and a job retried after a crash continues
+after the last committed row: no row is ever added twice. Problems are
+collected per line in the report, in the language of the person who uploaded,
+with the same readable texts as the API (utils/validation.explain).
 A store's own REJECTED book is not submitted again: the line reports it, with
 the moderator's reason, instead of refilling the moderation queue.
 """
@@ -25,25 +28,34 @@ from typing import Any
 
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import db_catalog, db_inventory
 from models.catalog import Book, BookScript, BookSource, BookStatus
-from models.inventory import MAX_PRICE, MAX_QUANTITY, ImportStatus, InventoryImport
+from models.inventory import MAX_PRICE, MAX_QUANTITY, ImportStatus, InventoryImport, QuantityMode
 from models.job import Job
 from schemas.catalog import BookCreate
-from services.excel import ExcelError, Row, parse_quantity, parse_som, read_rows, split_authors
+from services.excel import (
+    ExcelError,
+    Row,
+    parse_language,
+    parse_quantity,
+    parse_script,
+    parse_som,
+    read_rows,
+    split_authors,
+)
 from translations import Msg, translate
 from utils.i18n import Lang
-from utils.isbn import normalize_isbn
+from utils.isbn import expected_check_digit, normalize_isbn
 from utils.translit import book_dedupe_key, detect_script
+from utils.validation import explain
 
 logger = logging.getLogger(__name__)
 
 MAX_REPORTED_ERRORS = 500
-PROGRESS_EVERY = 50
 
 
 class RowError(Exception):
@@ -79,12 +91,23 @@ async def _own_rejected(db: AsyncSession, tenant_id: int, data: BookCreate) -> B
     )
 
 
-async def import_row(db: AsyncSession, tenant_id: int, row: Row, lang: Lang) -> tuple[bool, bool]:
-    """Returns (book_created, item_added). Raises RowError."""
+def _isbn_error(raw: str, lang: Lang) -> RowError:
+    """«978-9943-55-123-4»: the last digit should be 7 ... / «12345»: not an ISBN."""
+    expected = expected_check_digit(raw)
+    msg = Msg.ISBN_CHECK_DIGIT if expected is not None else Msg.ISBN_INVALID
+    text = translate(msg, lang).format(expected) if expected is not None else translate(msg, lang)
+    return RowError(msg, f"«{raw}»: {text}")
+
+
+async def import_row(
+    db: AsyncSession, tenant_id: int, row: Row, lang: Lang, mode: QuantityMode = QuantityMode.ADD
+) -> tuple[bool, bool]:
+    """Returns (book_created, item_added). Raises RowError. Leaves the shelf change
+    uncommitted: run() commits it together with the progress counter."""
     values = row.values
 
     price = parse_som(values.get("price", ""))
-    if price is None or price > MAX_PRICE:
+    if price is None or price <= 0 or price > MAX_PRICE:
         raise _error(Msg.IMPORT_ROW_BAD_PRICE, lang)
     quantity = parse_quantity(values["quantity"]) if "quantity" in values else 0
     if quantity is None or quantity > MAX_QUANTITY:
@@ -94,7 +117,7 @@ async def import_row(db: AsyncSession, tenant_id: int, row: Row, lang: Lang) -> 
     if "isbn" in values:
         isbn13 = normalize_isbn(values["isbn"])
         if isbn13 is None:
-            raise _error(Msg.INVALID_ISBN, lang, values["isbn"])
+            raise _isbn_error(values["isbn"], lang)
 
     book: Book | None = None
     if isbn13 is not None:
@@ -110,14 +133,19 @@ async def import_row(db: AsyncSession, tenant_id: int, row: Row, lang: Lang) -> 
             "authors": split_authors(values["authors"]),
             "publisher": values.get("publisher"),
         }
-        for name in ("language", "script"):
-            if name in values:
-                fields[name] = values[name].lower()
+        if "language" in values:
+            fields["language"] = parse_language(values["language"])
+            if fields["language"] is None:
+                raise _error(Msg.BOOK_LANGUAGE_INVALID, lang)
+        if "script" in values:
+            fields["script"] = parse_script(values["script"])
+            if fields["script"] is None:
+                raise _error(Msg.BOOK_SCRIPT_INVALID, lang)
         try:
             data = BookCreate(**fields)
         except ValidationError as exc:
-            field = ".".join(str(part) for part in exc.errors()[0]["loc"])
-            raise _error(Msg.IMPORT_ROW_INVALID, lang, field) from None
+            error = exc.errors()[0]
+            raise RowError(str(error["type"]), explain(error, lang)) from None
 
         if isbn13 is None:
             book = await db_catalog.find_existing_book(db, tenant_id, data)
@@ -134,15 +162,19 @@ async def import_row(db: AsyncSession, tenant_id: int, row: Row, lang: Lang) -> 
             book_created = True
 
     try:
-        added = await db_inventory.upsert_from_import(db, tenant_id, book.id, price, quantity, lang)
+        added = await db_inventory.upsert_from_import(db, tenant_id, book.id, price, quantity, lang, mode)
     except HTTPException as exc:  # the plan's book limit
         raise RowError(exc.detail["code"], exc.detail["message"]) from None
     return book_created, added
 
 
-async def _save_progress(db: AsyncSession, record: InventoryImport, processed: int) -> None:
-    record.processed_rows = processed
-    await db.commit()
+def _progress(record_id: int, processed: int, counters: dict[str, int], errors: list[dict[str, Any]]):
+    """The import's state after `processed` rows, written in the same transaction as the row."""
+    return (
+        update(InventoryImport)
+        .where(InventoryImport.id == record_id)
+        .values(processed_rows=processed, report={**counters, "errors": errors})
+    )
 
 
 async def run(db: AsyncSession, job: Job) -> None:
@@ -171,12 +203,20 @@ async def run(db: AsyncSession, job: Job) -> None:
         await db.commit()
         return
 
-    record_id = record.id
-    counters = {"books_matched": 0, "books_created": 0, "items_added": 0, "items_updated": 0}
-    errors: list[dict[str, Any]] = []
+    record_id, mode = record.id, record.quantity_mode
+    # A retried job continues where the last attempt committed (see _progress).
+    done_before = record.processed_rows
+    partial = record.report or {}
+    counters = {
+        key: int(partial.get(key, 0))
+        for key in ("books_matched", "books_created", "items_added", "items_updated")
+    }
+    errors: list[dict[str, Any]] = list(partial.get("errors", []))
     for processed, row in enumerate(rows, start=1):
+        if processed <= done_before:
+            continue
         try:
-            book_created, item_added = await import_row(db, tenant_id, row, lang)
+            book_created, item_added = await import_row(db, tenant_id, row, lang, mode)
         except RowError as exc:
             await db.rollback()
             if len(errors) < MAX_REPORTED_ERRORS:
@@ -184,9 +224,8 @@ async def run(db: AsyncSession, job: Job) -> None:
         else:
             counters["books_created" if book_created else "books_matched"] += 1
             counters["items_added" if item_added else "items_updated"] += 1
-        if processed % PROGRESS_EVERY == 0:
-            record = await db_inventory.get_import(db, tenant_id, record_id)
-            await _save_progress(db, record, processed)
+        await db.execute(_progress(record_id, processed, counters, errors))
+        await db.commit()
 
     record = await db_inventory.get_import(db, tenant_id, record_id)
     record.status = ImportStatus.DONE

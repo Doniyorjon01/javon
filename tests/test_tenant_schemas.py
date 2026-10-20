@@ -24,9 +24,12 @@ def test_update_rejects_server_owned_fields(field: str) -> None:
 
 def test_update_normalizes_phone() -> None:
     assert TenantUpdate(phone="+998 (90) 123-45-67").phone == "+998901234567"
+    # The same rules as a buyer's number: the local form is fine too.
+    assert TenantUpdate(phone="90 123 45 67").phone == "+998901234567"
+    assert TenantUpdate(phone="998901234567").phone == "+998901234567"
 
 
-@pytest.mark.parametrize("phone", ["901234567", "+0123456789", "+998abc", "+1234"])
+@pytest.mark.parametrize("phone", ["12345", "+0123456789", "+998abc", "+1234", "+99890123"])
 def test_update_rejects_bad_phone(phone: str) -> None:
     with pytest.raises(ValidationError):
         TenantUpdate(phone=phone)

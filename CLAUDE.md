@@ -76,13 +76,15 @@ async def get_book(
 - Vitrina API'si slug bo'yicha: `/storefront/{slug}/...`. Subdomen (`varaq.javon.uz`) ni Next.js shu yo'lga aylantiradi, API `Host` sarlavhasiga ishonmaydi.
 - Slug hech qachon bo'shatilmaydi (o'chirilgan do'konniki ham), shuning uchun `uq_tenants_slug` oddiy UNIQUE.
 - Bitta akkaunt `users.max_stores` tagacha do'kon ochadi (standart 1, platforma admini `PATCH /system/users/{id}` bilan oshiradi). `create_tenant` foydalanuvchi qatorini `FOR NO KEY UPDATE` bilan qulflab sanaydi, shuning uchun parallel so'rovlar chegaradan o'tolmaydi.
-- Vitrina faqat egasi `POST /tenants/{id}/launch` bosgandan keyin ochiladi (`tenants.launched_at`). Ishga tushmagan, to'xtatilgan yoki o'chirilgan do'kon vitrinada "topilmadi" (404) bo'lib ko'rinadi.
+- Vitrina faqat egasi `POST /tenants/{id}/launch` bosgandan keyin ochiladi (`tenants.launched_at`). Ishga tushmagan, to'xtatilgan, egasi vaqtincha yopgan (`tenants.paused_at`, `POST /pause` va `/resume`) yoki o'chirilgan do'kon vitrinada "topilmadi" (404) bo'lib ko'rinadi; botda "do'kon yopiq".
+- Egasi do'konni `DELETE /tenants/{id}` (`{"confirm_slug": "<slug>"}`) bilan o'chiradi (yumshoq). Yakunlanmagan buyurtma (`new`, `accepted`, `shipping`) bo'lsa 409 `store_has_open_orders`. Bot uziladi.
 - To'xtatilgan (`suspended`) do'kon faqat o'qiladi: `get_current_member` har qanday yozish so'roviga 403 `store_suspended` qaytaradi.
 - Relation'lar `lazy="raise"`: kerakli bog'lanish `selectinload` bilan aniq yuklanadi.
 
 ## Katalog
 
-- Kitoblar bitta umumiy katalogda (`books`, `authors`, `publishers`, `book_authors`). Platforma jadvallari: RLS yo'q, ko'rinish `database/db_catalog.py` dagi `visible_to(tenant_id)` bilan aniq filtrlanadi: `approved` hammaga, `pending` faqat qo'shgan do'konga, `rejected` qidiruvda hech kimga. Qo'shgan do'kon rad etilgan kitobini id bo'yicha va `/catalog/submissions` da sababi (`review_note`) bilan ko'radi.
+- Kitoblar bitta umumiy katalogda (`books`, `authors`, `publishers`, `book_authors`). Platforma jadvallari: RLS yo'q, ko'rinish `database/db_catalog.py` dagi `visible_to(tenant_id)` bilan aniq filtrlanadi: faol va rad etilmagan kitob (`approved` ham, `pending` ham) HAMMA do'konga ko'rinadi — bir do'kon qo'shgan kitobni boshqasi qidiruvda topadi, katalog o'z-o'zidan o'sadi. `rejected` qidiruvda hech kimga. Qo'shgan do'kon rad etilgan kitobini id bo'yicha va `/catalog/submissions` da sababi (`review_note`) bilan ko'radi.
+- Muallif va nashriyot har yozuvda alohida qator: noyoblik `(search_key, script)`. Kirill kitobning muallifi kirillda qoladi, lotin nashrdagi bilan aralashmaydi.
 - Bir do'kondan moderatsiya kutayotgan kitoblar soni `MAX_PENDING_BOOKS_PER_STORE` (50) dan oshmaydi. Tekshiruv do'kon qatorini qulflab bajariladi.
 - ISBN'siz kitobning takrori `books.dedupe_key` bilan aniqlanadi (`utils/translit.book_dedupe_key`: til, yozuv, sarlavha, mualliflar, nashriyot). Takror 409 `book_duplicate` va mavjud kitobning `book_id` sini qaytaradi. Lotin va kirill nashrlari alohida mahsulot: `books.script` (`latn`/`cyrl`/`other`), berilmasa sarlavhadan aniqlanadi.
 - Narx va qoldiq katalogda emas, do'konning zaxirasida (6-qadam).
@@ -90,7 +92,7 @@ async def get_book(
 - `books.search_text` va `books.dedupe_key` ni faqat `db_catalog` yozadi (`_set_derived`). Sarlavha, muallif, nashriyot, ISBN, til yoki yozuv o'zgarsa, qayta hisoblanadi. `utils/translit.py` qoidalari o'zgarsa, migratsiya bilan ikkalasi ham qayta hisoblanadi.
 - Qidiruv pg_trgm bilan ishlaydi: `<%` (imlo xatolari) va `LIKE` (qisman so'z), ikkalasi ham GIN indeksidan foydalanadi.
 - Enum ustunlar uchun `models/tenant.py` dagi `str_enum()` va `enum_check()` ishlatiladi. `Enum(create_constraint=True)` ishlatilmaydi: autogenerate CHECK'ni takrorlaydi.
-- Boshlang'ich katalog: `python -m scripts.seed_catalog kitoblar.csv` (format skript boshida yozilgan). CSV fayllar repoga qo'shilmaydi (`.gitignore`).
+- Boshlang'ich katalog: `python -m scripts.seed_catalog kitoblar.csv` (format skript boshida yozilgan). CSV fayllar repoga qo'shilmaydi (`.gitignore`). Tayyor to'plam: `python -m scripts.seed_starter_books` (ISBN'i Open Library'da tekshirilgan 55 ta kitob va ISBN'siz 12 ta o'zbek klassikasi; qayta ishga tushirsa takrorlamaydi).
 
 ## Fayllar (5-qadam)
 
@@ -115,7 +117,7 @@ async def get_book(
 - Qoldiq nisbiy o'zgaradi (`/adjust`, `quantity = quantity + :delta WHERE quantity + :delta >= 0`), buyurtmalar bilan poygada yo'qolmaydi. Bazada `CHECK quantity >= 0`.
 - Tarif bo'yicha kitoblar soni chegarasi `db_inventory.PLAN_ITEM_LIMITS` (Start 300, Standart 3000, Pro cheksiz); do'kon qatori qulflanib sanaladi.
 - Do'kon kamida bitta sotuvdagi kitob bilan ishga tushadi (`launch_needs_books`).
-- Excel import: fayl `inventory_imports.file_data` da saqlanadi va worker qatorma-qator qayta ishlaydi (har qator o'z commit'i). Katalogda yo'q kitob `submitted_via = import` bilan moderatsiyaga tushadi va alohida chegaraga ega (`MAX_PENDING_BOOKS_FROM_IMPORT`). Do'konning o'zi rad etilgan kitobi qayta yuborilmaydi. Hisobotdagi xato matnlari yuklagan odam tilida.
+- Excel import: fayl `inventory_imports.file_data` da saqlanadi va worker qatorma-qator qayta ishlaydi (qator va progress bitta commit'da; qayta urinishda `processed_rows` dan davom etadi). Fayldagi son `quantity_mode` bo'yicha: `add` (standart, yangi partiya: javondagiga qo'shiladi) yoki `set` (inventarizatsiya: tenglanadi). Narx 0 dan katta bo'lishi shart. `language`/`script` ustunlari "o'zbek", "rus", "кирилл" kabi so'zlarni ham tushunadi (`services/excel.parse_language`). Katalogda yo'q kitob `submitted_via = import` bilan moderatsiyaga tushadi va alohida chegaraga ega (`MAX_PENDING_BOOKS_FROM_IMPORT`). Do'konning o'zi rad etilgan kitobi qayta yuborilmaydi. Hisobotdagi xato matnlari yuklagan odam tilida.
 
 ## Vitrina (7-qadam)
 
@@ -127,7 +129,7 @@ async def get_book(
 - `create_order` bitta tranzaksiya: idempotency kaliti → do'kon qatori qulflanadi va raqam beriladi (`tenants.order_seq`) → zaxira qatorlari id tartibida `FOR UPDATE` → qoldiq tekshiriladi va kamayadi → mijoz (telefon bo'yicha bitta), buyurtma, qatorlar (nom, narx, MXIK nusxasi) va outbox vazifasi → commit.
 - Qulf tartibi hamma joyda bir xil: avval `tenants` qatori, keyin zaxira qatorlari (deadlock bo'lmaydi).
 - Narxni mijoz yubormaydi, server zaxiradan oladi. Bir IP bir do'konga `ORDER_RATE_LIMIT` dan ko'p buyurtma bera olmaydi (Redis; Redis ishlamasa ruxsat beriladi).
-- Kuzatish havolasi: `/storefront/{slug}/orders/{id}?token=` — token `SECRET_KEY` bilan HMAC (`utils/signing.py`), bazada saqlanmaydi. Noto'g'ri token = 404.
+- Kuzatish havolasi: `/storefront/{slug}/orders/{id}?token=` — token `SECRET_KEY` bilan HMAC (`utils/signing.py`), bazada saqlanmaydi. Noto'g'ri token = 404. "Buyurtmalarim" brauzerdagi buyurtmalar holatini bitta so'rovda oladi: `POST /storefront/{slug}/orders/statuses` (50 tagacha; noto'g'ri tokenli id javobda bo'lmaydi).
 - Holatlar `db_order.TRANSITIONS` da; olib ketiladigan buyurtma `shipping` dan o'tmaydi; bekor qilinganda qoldiq qaytadi; naqd buyurtma `completed` bo'lganda `paid`.
 - Rollback ORM obyektlarini eskirtiradi: rollback'dan keyin kerak bo'ladigan qiymatni (id, holat) oldindan o'zgaruvchiga oling, aks holda `MissingGreenlet`. Uzoq yashaydigan kontekstda ORM obyekt emas, nusxa (`StoreInfo`, `BotInfo`) saqlanadi; bitta ustunni o'zgartirish `UPDATE ... WHERE id = :id` bilan (`db_telegram.set_group`, `mark_broken`).
 
@@ -222,6 +224,7 @@ async def get_book(
 ## Xatolar va tillar
 
 - Har bir xato `{"detail": {"code", "message"}}` ko'rinishida qaytadi.
+- 422 da `detail.errors` ro'yxati (`type`, `loc`, `msg`) bor, `message` = birinchi xato. Har `msg` so'rov tilida va maydon nomi bilan («Telefon: ...»): `utils/validation.explain`. Validator'lar `ValueError("...")` emas, `raise validation.invalid(Msg.X)` qiladi (inglizcha texnik matn foydalanuvchiga chiqmaydi). Telefon `validation.phone` (mahalliy "90 123 45 67" ham qabul qilinadi), ISBN `validation.isbn` (noto'g'ri nazorat raqamida to'g'risini aytadi).
 - Yangi xabar: `Msg`ga kod qo'shiladi va uch tilda matn yoziladi. Test har bir til borligini va `{}` sonlari tengligini tekshiradi.
 - Til `Accept-Language`dan olinadi, standart til o'zbekcha.
 

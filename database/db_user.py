@@ -126,6 +126,7 @@ async def get_user_stores(db: AsyncSession, user_id: int) -> list[MyStoreOut]:
             Tenant.status,
             Membership.role,
             Tenant.launched_at,
+            Tenant.paused_at,
             Tenant.trial_ends_at,
             Tenant.paid_until,
         )
@@ -146,6 +147,7 @@ async def get_user_stores(db: AsyncSession, user_id: int) -> list[MyStoreOut]:
             status=row.status,
             role=row.role,
             launched_at=row.launched_at,
+            paused_at=row.paused_at,
             access=access_state(row.status, row.trial_ends_at, row.paid_until, now),
         )
         for row in rows

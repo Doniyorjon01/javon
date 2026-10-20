@@ -116,6 +116,45 @@ class Msg(StrEnum):
     LABEL_ITEMS_INVALID = "label_items_invalid"
     JOB_NOT_RETRYABLE = "job_not_retryable"
 
+    # --- validation (422 errors[].type) and store closing -----------------------
+    FIELD_REQUIRED = "field_required"
+    TOO_SHORT = "text_too_short"
+    TOO_LONG = "text_too_long"
+    LIST_TOO_SHORT = "list_too_short"
+    LIST_TOO_LONG = "list_too_long"
+    WRONG_FORMAT = "wrong_format"
+    NOT_A_NUMBER = "not_a_number"
+    NUMBER_ABOVE = "number_above"
+    NUMBER_MIN = "number_min"
+    NUMBER_MAX = "number_max"
+    NOT_ALLOWED_VALUE = "not_allowed_value"
+    UNKNOWN_FIELD = "unknown_field"
+    BAD_REQUEST_BODY = "bad_request_body"
+    NOT_BOOL = "not_bool"
+    BAD_DATE = "bad_date"
+    INVALID_VALUE = "invalid_value"
+    PHONE_INVALID = "phone_invalid"
+    CARD_NUMBER_INVALID = "card_number_invalid"
+    ISBN_INVALID = "isbn_invalid"
+    ISBN_CHECK_DIGIT = "isbn_check_digit"
+    COLOR_INVALID = "color_invalid"
+    SLUG_INVALID = "slug_invalid"
+    USERNAME_INVALID = "username_invalid"
+    PRICE_POSITIVE = "price_positive"
+    DUPLICATE_ORDER_LINES = "duplicate_order_lines"
+    ADDRESS_REQUIRED = "address_required"
+    LOCATION_PAIR = "location_pair"
+    REFUSAL_NOTE_REQUIRED = "refusal_note_required"
+    NOT_NULL = "not_null"
+    HOURS_ORDER = "hours_order"
+    LANGUAGES_REPEAT = "languages_repeat"
+    TEXT_NEEDS_LETTERS = "text_needs_letters"
+    AUTHOR_REPEAT = "author_repeat"
+    BOOK_LANGUAGE_INVALID = "book_language_invalid"
+    BOOK_SCRIPT_INVALID = "book_script_invalid"
+    STORE_HAS_OPEN_ORDERS = "store_has_open_orders"
+    STORE_DELETE_CONFIRM = "store_delete_confirm"
+
 
 MESSAGES: dict[Msg, dict[Lang, str]] = {
     Msg.UNKNOWN_ERROR: {
@@ -521,6 +560,243 @@ MESSAGES: dict[Msg, dict[Lang, str]] = {
         Lang.ru: "Повторить можно только задачу, завершившуюся ошибкой.",
         Lang.en: "Only a failed job can be retried.",
     },
+    Msg.FIELD_REQUIRED: {
+        Lang.uz: "Toʻldirilishi shart.",
+        Lang.ru: "Обязательное поле.",
+        Lang.en: "This field is required.",
+    },
+    Msg.TOO_SHORT: {
+        Lang.uz: "Kamida {} ta belgi boʻlsin.",
+        Lang.ru: "Не короче {} символов.",
+        Lang.en: "At least {} characters.",
+    },
+    Msg.TOO_LONG: {
+        Lang.uz: "Koʻpi bilan {} ta belgi boʻlsin.",
+        Lang.ru: "Не длиннее {} символов.",
+        Lang.en: "At most {} characters.",
+    },
+    Msg.LIST_TOO_SHORT: {
+        Lang.uz: "Kamida {} ta boʻlsin.",
+        Lang.ru: "Нужно не меньше {}.",
+        Lang.en: "At least {} needed.",
+    },
+    Msg.LIST_TOO_LONG: {
+        Lang.uz: "Koʻpi bilan {} ta boʻlsin.",
+        Lang.ru: "Не больше {}.",
+        Lang.en: "At most {} allowed.",
+    },
+    Msg.WRONG_FORMAT: {
+        Lang.uz: "Koʻrinishi notoʻgʻri.",
+        Lang.ru: "Неверный формат.",
+        Lang.en: "Wrong format.",
+    },
+    Msg.NOT_A_NUMBER: {
+        Lang.uz: "Son kiriting.",
+        Lang.ru: "Введите число.",
+        Lang.en: "Enter a number.",
+    },
+    Msg.NUMBER_ABOVE: {
+        Lang.uz: "{} dan katta boʻlsin.",
+        Lang.ru: "Должно быть больше {}.",
+        Lang.en: "Must be greater than {}.",
+    },
+    Msg.NUMBER_MIN: {
+        Lang.uz: "Kamida {} boʻlsin.",
+        Lang.ru: "Не меньше {}.",
+        Lang.en: "At least {}.",
+    },
+    Msg.NUMBER_MAX: {
+        Lang.uz: "Koʻpi bilan {} boʻlsin.",
+        Lang.ru: "Не больше {}.",
+        Lang.en: "At most {}.",
+    },
+    Msg.NOT_ALLOWED_VALUE: {
+        Lang.uz: "Roʻyxatdagi qiymatlardan birini tanlang.",
+        Lang.ru: "Выберите одно из допустимых значений.",
+        Lang.en: "Choose one of the allowed values.",
+    },
+    Msg.UNKNOWN_FIELD: {
+        Lang.uz: "Bu maydonni yuborib boʻlmaydi.",
+        Lang.ru: "Это поле нельзя передавать.",
+        Lang.en: "This field cannot be sent.",
+    },
+    Msg.BAD_REQUEST_BODY: {
+        Lang.uz: "Soʻrov maʼlumotlari buzilgan.",
+        Lang.ru: "Данные запроса повреждены.",
+        Lang.en: "The request body is malformed.",
+    },
+    Msg.NOT_BOOL: {
+        Lang.uz: "Ha yoki yoʻq boʻlsin.",
+        Lang.ru: "Должно быть «да» или «нет».",
+        Lang.en: "Must be yes or no.",
+    },
+    Msg.BAD_DATE: {
+        Lang.uz: "Sana yoki vaqt notoʻgʻri.",
+        Lang.ru: "Неверная дата или время.",
+        Lang.en: "Invalid date or time.",
+    },
+    Msg.INVALID_VALUE: {
+        Lang.uz: "Qiymat notoʻgʻri.",
+        Lang.ru: "Неверное значение.",
+        Lang.en: "Invalid value.",
+    },
+    Msg.PHONE_INVALID: {
+        Lang.uz: "Telefon raqam notoʻgʻri. Masalan: 90 123 45 67 yoki +998 90 123 45 67.",
+        Lang.ru: "Неверный номер телефона. Например: 90 123 45 67 или +998 90 123 45 67.",
+        Lang.en: "Invalid phone number. For example: 90 123 45 67 or +998 90 123 45 67.",
+    },
+    Msg.CARD_NUMBER_INVALID: {
+        Lang.uz: "Karta raqami 16 ta raqamdan iborat boʻlsin.",
+        Lang.ru: "Номер карты должен состоять из 16 цифр.",
+        Lang.en: "The card number must have 16 digits.",
+    },
+    Msg.ISBN_INVALID: {
+        Lang.uz: "ISBN notoʻgʻri: 10 yoki 13 ta raqam boʻlishi kerak (978... yoki 979...). Kitobda ISBN boʻlmasa, maydonni boʻsh qoldiring.",
+        Lang.ru: "Неверный ISBN: нужно 10 или 13 цифр (978... или 979...). Если у книги нет ISBN, оставьте поле пустым.",
+        Lang.en: "Invalid ISBN: it needs 10 or 13 digits (978... or 979...). If the book has no ISBN, leave the field empty.",
+    },
+    Msg.ISBN_CHECK_DIGIT: {
+        Lang.uz: "ISBNʼning oxirgi (nazorat) raqami mos kelmaydi: bu raqamlar uchun oxirgisi {} boʻlishi kerak. Kitobdagi ISBNʼni qayta tekshiring yoki ISBNʼni boʻsh qoldiring.",
+        Lang.ru: "Не совпадает последняя (контрольная) цифра ISBN: для этих цифр она должна быть {}. Проверьте ISBN на книге или оставьте поле пустым.",
+        Lang.en: "The ISBN's last (check) digit does not match: for these digits it should be {}. Check the ISBN on the book or leave it empty.",
+    },
+    Msg.COLOR_INVALID: {
+        Lang.uz: "Rang #RRGGBB koʻrinishida boʻlsin, masalan #2B3BD1.",
+        Lang.ru: "Цвет в формате #RRGGBB, например #2B3BD1.",
+        Lang.en: "Use a #RRGGBB color, e.g. #2B3BD1.",
+    },
+    Msg.SLUG_INVALID: {
+        Lang.uz: "Manzil faqat kichik lotin harflari, raqamlar va chiziqchadan iborat boʻlsin (3–40 belgi).",
+        Lang.ru: "Адрес: только строчные латинские буквы, цифры и дефис (3–40 символов).",
+        Lang.en: "The address may contain only lowercase Latin letters, digits and hyphens (3–40 characters).",
+    },
+    Msg.USERNAME_INVALID: {
+        Lang.uz: "Username notoʻgʻri: faqat lotin harflari, raqamlar va _.",
+        Lang.ru: "Неверный username: только латинские буквы, цифры и _.",
+        Lang.en: "Invalid username: Latin letters, digits and _ only.",
+    },
+    Msg.PRICE_POSITIVE: {
+        Lang.uz: "Narx 0 dan katta boʻlsin.",
+        Lang.ru: "Цена должна быть больше 0.",
+        Lang.en: "The price must be greater than 0.",
+    },
+    Msg.DUPLICATE_ORDER_LINES: {
+        Lang.uz: "Bir kitob savatda bir marta boʻlsin: sonini oʻzgartiring.",
+        Lang.ru: "Одна книга — одна строка: измените количество.",
+        Lang.en: "List each book once and change its quantity.",
+    },
+    Msg.ADDRESS_REQUIRED: {
+        Lang.uz: "Yetkazib berish uchun manzilni yozing.",
+        Lang.ru: "Для доставки укажите адрес.",
+        Lang.en: "Enter an address for delivery.",
+    },
+    Msg.LOCATION_PAIR: {
+        Lang.uz: "Kenglik va uzunlik birga kiritiladi.",
+        Lang.ru: "Широта и долгота указываются вместе.",
+        Lang.en: "Latitude and longitude go together.",
+    },
+    Msg.REFUSAL_NOTE_REQUIRED: {
+        Lang.uz: "Chekni rad etish sababini yozing.",
+        Lang.ru: "Напишите причину отказа.",
+        Lang.en: "Write why the receipt is refused.",
+    },
+    Msg.NOT_NULL: {
+        Lang.uz: "Boʻsh qoldirib boʻlmaydi.",
+        Lang.ru: "Не может быть пустым.",
+        Lang.en: "Cannot be empty.",
+    },
+    Msg.HOURS_ORDER: {
+        Lang.uz: "Ochilish vaqti yopilishdan oldin boʻlsin.",
+        Lang.ru: "Время открытия должно быть раньше закрытия.",
+        Lang.en: "Opening time must be before closing time.",
+    },
+    Msg.LANGUAGES_REPEAT: {
+        Lang.uz: "Tillar takrorlanmasin.",
+        Lang.ru: "Языки не должны повторяться.",
+        Lang.en: "Languages must not repeat.",
+    },
+    Msg.TEXT_NEEDS_LETTERS: {
+        Lang.uz: "Harf yoki raqam boʻlsin.",
+        Lang.ru: "Нужны буквы или цифры.",
+        Lang.en: "Must contain letters or digits.",
+    },
+    Msg.AUTHOR_REPEAT: {
+        Lang.uz: "Bir muallif ikki marta yozilgan.",
+        Lang.ru: "Один автор указан дважды.",
+        Lang.en: "The same author is listed twice.",
+    },
+    Msg.BOOK_LANGUAGE_INVALID: {
+        Lang.uz: "Til notoʻgʻri: oʻzbek (uz), rus (ru), ingliz (en) yoki boshqa (other) deb yozing.",
+        Lang.ru: "Неверный язык: напишите узбекский (uz), русский (ru), английский (en) или другой (other).",
+        Lang.en: "Unknown language: write Uzbek (uz), Russian (ru), English (en) or other.",
+    },
+    Msg.BOOK_SCRIPT_INVALID: {
+        Lang.uz: "Yozuv notoʻgʻri: lotin (latn) yoki kirill (cyrl) deb yozing, yoki boʻsh qoldiring.",
+        Lang.ru: "Неверный алфавит: напишите латиница (latn) или кириллица (cyrl) или оставьте пустым.",
+        Lang.en: "Unknown script: write Latin (latn) or Cyrillic (cyrl), or leave it empty.",
+    },
+    Msg.STORE_HAS_OPEN_ORDERS: {
+        Lang.uz: "Doʻkonda {} ta yakunlanmagan buyurtma bor. Avval ularni yakunlang yoki bekor qiling.",
+        Lang.ru: "В магазине {} незавершённых заказов. Сначала завершите или отмените их.",
+        Lang.en: "The store has {} unfinished orders. Complete or cancel them first.",
+    },
+    Msg.STORE_DELETE_CONFIRM: {
+        Lang.uz: "Tasdiqlash uchun doʻkon manzilini ({}) aynan yozing.",
+        Lang.ru: "Для подтверждения введите адрес магазина ({}) точно.",
+        Lang.en: "To confirm, type the store address ({}) exactly.",
+    },
+}
+
+
+# Field names in validation messages (errors.py): «Telefon: ...».
+FIELD_LABELS: dict[str, dict[Lang, str]] = {
+    "name": {Lang.uz: "Nomi", Lang.ru: "Название", Lang.en: "Name"},
+    "slug": {Lang.uz: "Manzil", Lang.ru: "Адрес", Lang.en: "Address"},
+    "phone": {Lang.uz: "Telefon", Lang.ru: "Телефон", Lang.en: "Phone"},
+    "address": {Lang.uz: "Manzil", Lang.ru: "Адрес", Lang.en: "Address"},
+    "latitude": {Lang.uz: "Kenglik", Lang.ru: "Широта", Lang.en: "Latitude"},
+    "longitude": {Lang.uz: "Uzunlik", Lang.ru: "Долгота", Lang.en: "Longitude"},
+    "working_hours": {Lang.uz: "Ish vaqti", Lang.ru: "Часы работы", Lang.en: "Working hours"},
+    "telegram_username": {Lang.uz: "Telegram", Lang.ru: "Telegram", Lang.en: "Telegram"},
+    "instagram_username": {Lang.uz: "Instagram", Lang.ru: "Instagram", Lang.en: "Instagram"},
+    "languages": {Lang.uz: "Tillar", Lang.ru: "Языки", Lang.en: "Languages"},
+    "theme": {Lang.uz: "Dizayn", Lang.ru: "Дизайн", Lang.en: "Design"},
+    "accent_color": {Lang.uz: "Rang", Lang.ru: "Цвет", Lang.en: "Color"},
+    "delivery_fee": {Lang.uz: "Yetkazish narxi", Lang.ru: "Стоимость доставки", Lang.en: "Delivery fee"},
+    "free_delivery_from": {
+        Lang.uz: "Bepul yetkazish chegarasi",
+        Lang.ru: "Бесплатная доставка от",
+        Lang.en: "Free delivery from",
+    },
+    "delivery_area": {Lang.uz: "Yetkazish hududi", Lang.ru: "Зона доставки", Lang.en: "Delivery area"},
+    "card_number": {Lang.uz: "Karta raqami", Lang.ru: "Номер карты", Lang.en: "Card number"},
+    "card_holder": {Lang.uz: "Karta egasi", Lang.ru: "Владелец карты", Lang.en: "Card holder"},
+    "isbn": {Lang.uz: "ISBN", Lang.ru: "ISBN", Lang.en: "ISBN"},
+    "title": {Lang.uz: "Kitob nomi", Lang.ru: "Название книги", Lang.en: "Title"},
+    "subtitle": {Lang.uz: "Qoʻshimcha nom", Lang.ru: "Подзаголовок", Lang.en: "Subtitle"},
+    "authors": {Lang.uz: "Mualliflar", Lang.ru: "Авторы", Lang.en: "Authors"},
+    "publisher": {Lang.uz: "Nashriyot", Lang.ru: "Издательство", Lang.en: "Publisher"},
+    "language": {Lang.uz: "Til", Lang.ru: "Язык", Lang.en: "Language"},
+    "script": {Lang.uz: "Yozuv", Lang.ru: "Алфавит", Lang.en: "Script"},
+    "published_year": {Lang.uz: "Nashr yili", Lang.ru: "Год издания", Lang.en: "Year"},
+    "pages": {Lang.uz: "Sahifalar", Lang.ru: "Страницы", Lang.en: "Pages"},
+    "description": {Lang.uz: "Tavsif", Lang.ru: "Описание", Lang.en: "Description"},
+    "mxik_code": {Lang.uz: "MXIK", Lang.ru: "ИКПУ", Lang.en: "MXIK"},
+    "price": {Lang.uz: "Narx", Lang.ru: "Цена", Lang.en: "Price"},
+    "quantity": {Lang.uz: "Soni", Lang.ru: "Количество", Lang.en: "Quantity"},
+    "delta": {Lang.uz: "Oʻzgarish", Lang.ru: "Изменение", Lang.en: "Change"},
+    "customer_name": {Lang.uz: "Ism", Lang.ru: "Имя", Lang.en: "Name"},
+    "comment": {Lang.uz: "Izoh", Lang.ru: "Комментарий", Lang.en: "Comment"},
+    "items": {Lang.uz: "Kitoblar", Lang.ru: "Книги", Lang.en: "Books"},
+    "note": {Lang.uz: "Izoh", Lang.ru: "Примечание", Lang.en: "Note"},
+    "reason": {Lang.uz: "Sabab", Lang.ru: "Причина", Lang.en: "Reason"},
+    "token": {Lang.uz: "Token", Lang.ru: "Токен", Lang.en: "Token"},
+    "months": {Lang.uz: "Oylar", Lang.ru: "Месяцы", Lang.en: "Months"},
+    "amount": {Lang.uz: "Summa", Lang.ru: "Сумма", Lang.en: "Amount"},
+    "plan": {Lang.uz: "Tarif", Lang.ru: "Тариф", Lang.en: "Plan"},
+    "first_name": {Lang.uz: "Ism", Lang.ru: "Имя", Lang.en: "Name"},
+    "file": {Lang.uz: "Fayl", Lang.ru: "Файл", Lang.en: "File"},
+    "q": {Lang.uz: "Qidiruv", Lang.ru: "Поиск", Lang.en: "Search"},
 }
 
 

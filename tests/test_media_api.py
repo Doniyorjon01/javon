@@ -129,12 +129,13 @@ async def test_cover_rules(client: AsyncClient, db: AsyncSession, storage: Memor
     assert refused.status_code == 403
     assert refused.json()["detail"]["code"] == "cover_not_allowed"
 
-    # Another store's pending book does not exist for this one.
+    # Another store sees the pending book (shared catalog) but may not change its cover.
     await sign_in(client, other_owner)
-    hidden = await client.put(
+    foreign = await client.put(
         f"/tenants/{other.id}/catalog/books/{pending['id']}/cover", files=upload(jpeg())
     )
-    assert hidden.status_code == 404
+    assert foreign.status_code == 403
+    assert foreign.json()["detail"]["code"] == "cover_not_allowed"
 
     await sign_in(client, admin)
     by_admin = await client.put(f"/system/catalog/books/{approved.id}/cover", files=upload(jpeg()))

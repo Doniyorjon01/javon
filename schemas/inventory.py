@@ -18,9 +18,11 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from models.inventory import MAX_PRICE, MAX_QUANTITY, ImportStatus
+from models.inventory import MAX_PRICE, MAX_QUANTITY, ImportStatus, QuantityMode
 from schemas.base import BIGINT_MAX, ORMModel
 from schemas.catalog import BookOut
+from translations import Msg
+from utils.validation import invalid
 
 Price = int  # tiyin; bounds are set per field below
 
@@ -35,7 +37,7 @@ class InventoryItemCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     book_id: int = Field(gt=0, le=BIGINT_MAX)
-    price: Price = Field(ge=0, le=MAX_PRICE)
+    price: Price = Field(gt=0, le=MAX_PRICE)  # a book is never sold for 0
     quantity: int = Field(default=0, ge=0, le=MAX_QUANTITY)
     is_visible: bool = True
 
@@ -45,7 +47,7 @@ class InventoryItemUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    price: Price | None = Field(default=None, ge=0, le=MAX_PRICE)
+    price: Price | None = Field(default=None, gt=0, le=MAX_PRICE)
     quantity: int | None = Field(default=None, ge=0, le=MAX_QUANTITY)
     is_visible: bool | None = None
 
@@ -53,7 +55,7 @@ class InventoryItemUpdate(BaseModel):
     def _no_nulls(self) -> Self:
         for name in self.model_fields_set:
             if getattr(self, name) is None:
-                raise ValueError(f"{name} cannot be null")
+                raise invalid(Msg.NOT_NULL)
         return self
 
 
@@ -77,6 +79,7 @@ class InventoryImportOut(ORMModel):
     id: int
     status: ImportStatus
     file_name: str
+    quantity_mode: QuantityMode
     total_rows: int
     processed_rows: int
     # {"books_matched", "books_created", "items_added", "items_updated",

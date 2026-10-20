@@ -31,12 +31,12 @@ from models.inventory import MAX_PRICE
 from models.tenant import Plan, TenantStatus
 from schemas.base import ORMModel
 from services.media import image_urls
+from translations import Msg
+from utils import validation
 from utils.i18n import Lang
 from utils.images import LOGO_SPEC
 from utils.slug import SLUG_MAX_LENGTH, SLUG_MIN_LENGTH, SLUG_PATTERN
-
-_PHONE_SEPARATORS = re.compile(r"[\s\-()]")
-_PHONE_RE = re.compile(r"^\+[1-9][0-9]{6,14}$")
+from utils.validation import invalid
 
 
 def _empty_to_none(value: Any) -> Any:
@@ -45,18 +45,12 @@ def _empty_to_none(value: Any) -> Any:
     return value
 
 
-def _normalize_phone(value: str) -> str:
-    value = _PHONE_SEPARATORS.sub("", value)
-    if not _PHONE_RE.match(value):
-        raise ValueError("phone must be in international format, e.g. +998901234567")
-    return value
-
-
 def _strip_at(value: str) -> str:
     return value.removeprefix("@")
 
 
-Phone = Annotated[str, AfterValidator(_normalize_phone)]
+# The same rules as a buyer's number: "90 123 45 67" and "+998 90 123-45-67" both work.
+Phone = Annotated[str, AfterValidator(validation.phone)]
 Slug = Annotated[
     str,
     BeforeValidator(lambda v: v.strip().lower() if isinstance(v, str) else v),
@@ -101,7 +95,7 @@ class DayHours(BaseModel):
     @model_validator(mode="after")
     def _open_before_close(self) -> Self:
         if self.open >= self.close:
-            raise ValueError("open must be earlier than close")
+            raise invalid(Msg.HOURS_ORDER)
         return self
 
 
@@ -150,7 +144,7 @@ class TenantUpdate(BaseModel):
     @classmethod
     def _unique_languages(cls, value: list[Lang] | None) -> list[Lang] | None:
         if value is not None and len(set(value)) != len(value):
-            raise ValueError("languages must not repeat")
+            raise invalid(Msg.LANGUAGES_REPEAT)
         return value
 
     @model_validator(mode="after")
@@ -163,16 +157,16 @@ class TenantUpdate(BaseModel):
             "card_transfer_enabled",
         ):
             if name in self.model_fields_set and getattr(self, name) is None:
-                raise ValueError(f"{name} cannot be empty")
+                raise invalid(Msg.NOT_NULL)
         return self
 
     @model_validator(mode="after")
     def _location_pair(self) -> Self:
         sent = self.model_fields_set
         if ("latitude" in sent) != ("longitude" in sent):
-            raise ValueError("latitude and longitude must be sent together")
+            raise invalid(Msg.LOCATION_PAIR)
         if (self.latitude is None) != (self.longitude is None):
-            raise ValueError("latitude and longitude must both be set or both be empty")
+            raise invalid(Msg.LOCATION_PAIR)
         return self
 
 
@@ -213,8 +207,17 @@ class TenantOut(StorefrontOut):
     plan: Plan
     trial_ends_at: datetime | None
     launched_at: datetime | None  # None: the wizard is not finished, storefront hidden
+    paused_at: datetime | None  # set: the owner closed the storefront for a while
     created_at: datetime
     updated_at: datetime
+
+
+class TenantDeleteIn(BaseModel):
+    """The store's address typed again: deleting must never be a slip of the finger."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirm_slug: str = Field(min_length=1, max_length=SLUG_MAX_LENGTH)
 
 
 class SlugCheckOut(BaseModel):

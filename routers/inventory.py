@@ -16,7 +16,8 @@ POST   /tenants/{tenant_id}/inventory/{item_id}/adjust  {"delta": +5}: stock arr
 DELETE /tenants/{tenant_id}/inventory/{item_id}         owner: off the shelf
 
 GET    /tenants/{tenant_id}/inventory/import-template   the .xlsx to fill in
-POST   /tenants/{tenant_id}/inventory/imports           owner, multipart "file": 202, the
+POST   /tenants/{tenant_id}/inventory/imports           owner, multipart "file" (?quantity_mode=add|set,
+                                                        add by default: quantities are added): 202, the
                                                         worker processes it; poll the import
 GET    /tenants/{tenant_id}/inventory/imports           owner: past imports
 GET    /tenants/{tenant_id}/inventory/imports/{id}      owner: status, counters, error lines
@@ -34,7 +35,7 @@ from auth.oauth2 import CurrentMember, get_current_member, get_current_owner
 from config import settings
 from database import db_inventory
 from database.config import get_pg_db
-from models.inventory import InventoryImport, InventoryItem
+from models.inventory import InventoryImport, InventoryItem, QuantityMode
 from schemas.base import BIGINT_MAX
 from schemas.inventory import (
     InventoryImportOut,
@@ -81,13 +82,18 @@ async def get_import_template(member: CurrentMember = Security(get_current_membe
 @router.post("/imports", response_model=InventoryImportOut, status_code=status.HTTP_202_ACCEPTED)
 async def create_import(
     file: UploadFile = File(description=".xlsx made from the template"),
+    quantity_mode: QuantityMode = Query(
+        default=QuantityMode.ADD,
+        description='"add": quantities are added to the shelf (a delivery); '
+        '"set": they replace it (a stocktake)',
+    ),
     owner: CurrentMember = Security(get_current_owner),
     db: AsyncSession = Depends(get_pg_db),
     lang: Lang = Depends(get_lang),
 ) -> InventoryImport:
     data = await read_upload(file, settings.MAX_UPLOAD_BYTES, lang)
     return await db_inventory.create_import(
-        db, owner.tenant_id, owner.user.id, file.filename or "import.xlsx", data, lang
+        db, owner.tenant_id, owner.user.id, file.filename or "import.xlsx", data, lang, quantity_mode
     )
 
 
@@ -111,7 +117,7 @@ async def get_import(
 
 @router.get("/isbn/{isbn}", response_model=InventoryItemOut)
 async def get_item_by_isbn(
-    isbn: str = Path(min_length=10, max_length=20),
+    isbn: str = Path(min_length=1, max_length=20),
     member: CurrentMember = Security(get_current_member),
     db: AsyncSession = Depends(get_pg_db),
     lang: Lang = Depends(get_lang),

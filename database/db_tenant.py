@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from fastapi import status
-from sqlalchemy import ColumnElement, and_, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,8 @@ from database.db_job import JobKind
 from database.integrity import constraint_name
 from errors import generate_error
 from models.inventory import InventoryItem
+from models.order import Order, OrderStatus
+from models.staff import StaffInvite
 from models.tenant import MemberRole, Membership, Plan, Tenant, TenantStatus
 from models.user import User
 from schemas.tenant import SlugCheckOut, TenantCreate, TenantUpdate
@@ -42,6 +44,7 @@ def storefront_visible(now: datetime) -> ColumnElement[bool]:
         Tenant.is_active.is_(True),
         Tenant.status.in_(_PUBLIC_STATUSES),
         Tenant.launched_at.is_not(None),
+        Tenant.paused_at.is_(None),
         subscription_open(now),
     )
 
@@ -299,3 +302,59 @@ async def set_suspended(
     await db.commit()
     await db.refresh(tenant)
     return tenant
+
+
+# --------------------------------------------------------------------------- #
+# The owner: pause, resume, delete
+# --------------------------------------------------------------------------- #
+async def set_paused(db: AsyncSession, pk: int, paused: bool, lang: Lang = DEFAULT_LANG) -> Tenant:
+    """Close the storefront for a while (holiday, stocktake) or open it again. The
+    admin panel, orders already placed and the subscription clock are unaffected."""
+    tenant = await get_tenant(db, pk, lang)
+    if paused and tenant.paused_at is None:
+        tenant.paused_at = func.now()
+    elif not paused:
+        tenant.paused_at = None
+    await db.commit()
+    await db.refresh(tenant)
+    return tenant
+
+
+# Orders that still need the store, counted before a store is deleted.
+UNFINISHED_ORDER_STATUSES = (OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.SHIPPING)
+
+
+async def delete_tenant(db: AsyncSession, pk: int, confirm_slug: str, lang: Lang = DEFAULT_LANG) -> None:
+    """
+    The owner closes the store for good. Soft delete (is_active = False): orders
+    and the payment history stay for accounting, the slug is never given to
+    another store, and the owner may open a new store in its place
+    (users.max_stores counts only live stores). Refused while orders are
+    unfinished, and only with the store's address typed exactly (no accidents).
+    Its Telegram bot is disconnected by the router (db_telegram.disconnect_bot).
+    The session must be bound to the store (orders are counted under RLS).
+    """
+    tenant = await db.scalar(
+        select(Tenant).where(Tenant.id == pk, Tenant.is_active.is_(True)).with_for_update()
+    )
+    if tenant is None:
+        await db.rollback()
+        raise generate_error(Msg.STORE_NOT_FOUND, lang, status.HTTP_404_NOT_FOUND)
+    slug = tenant.slug  # read before any rollback expires the object
+    if confirm_slug.strip().lower() != slug:
+        await db.rollback()
+        raise generate_error(Msg.STORE_DELETE_CONFIRM, lang, format_values=(slug,))
+    unfinished = await db.scalar(
+        select(func.count())
+        .select_from(Order)
+        .where(Order.tenant_id == pk, Order.status.in_(UNFINISHED_ORDER_STATUSES))
+    )
+    if unfinished:
+        await db.rollback()
+        raise generate_error(
+            Msg.STORE_HAS_OPEN_ORDERS, lang, status.HTTP_409_CONFLICT, format_values=(unfinished,)
+        )
+    tenant.is_active = False
+    await db.execute(update(Membership).where(Membership.tenant_id == pk).values(is_active=False))
+    await db.execute(update(StaffInvite).where(StaffInvite.tenant_id == pk).values(is_active=False))
+    await db.commit()

@@ -13,6 +13,12 @@ POST  /tenants/{tenant_id}/launch
                             last wizard step: the storefront becomes public — owner
                             only; needs at least one book on sale (409
                             launch_needs_books); calling it again changes nothing
+POST  /tenants/{tenant_id}/pause    owner: close the storefront for a while (holiday,
+                                   stocktake); the admin panel keeps working
+POST  /tenants/{tenant_id}/resume   owner: open it again
+DELETE /tenants/{tenant_id}         owner, {"confirm_slug": "<slug>"}: close the store
+                                   for good (soft delete); refused while orders are
+                                   unfinished; the Telegram bot is disconnected
 PUT   /tenants/{tenant_id}/logo
                             multipart "file": JPEG, PNG or WebP up to MAX_UPLOAD_BYTES;
                             stored as WebP variants (TenantOut.logo) — owner only
@@ -22,24 +28,32 @@ The store comes from the path through get_current_member / get_current_owner,
 which also bind the DB session to it (RLS). Never read tenant_id from a body.
 """
 
-from fastapi import APIRouter, Depends, File, Query, Security, UploadFile, status
+import logging
+
+from fastapi import APIRouter, Depends, File, Query, Request, Security, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.oauth2 import CurrentMember, get_current_member, get_current_owner, get_current_user
 from config import settings
-from database import db_tenant
+from database import db_telegram, db_tenant
 from database.config import get_pg_db
 from errors import generate_error
 from models.tenant import Tenant
 from models.user import User
-from schemas.tenant import SlugCheckOut, TenantCreate, TenantOut, TenantUpdate
+from schemas.tenant import SlugCheckOut, TenantCreate, TenantDeleteIn, TenantOut, TenantUpdate
 from services.media import read_upload
 from services.storage import Storage, get_storage
+from services.telegram import TelegramClient
 from translations import Msg
 from utils.i18n import Lang, get_lang
 from utils.slug import slugify
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
+logger = logging.getLogger(__name__)
+
+
+def get_telegram(request: Request) -> TelegramClient:
+    return request.app.state.telegram
 
 
 @router.get("/slug-check", response_model=SlugCheckOut)
@@ -113,3 +127,40 @@ async def delete_logo(
     lang: Lang = Depends(get_lang),
 ) -> Tenant:
     return await db_tenant.delete_logo(db, storage, owner.tenant_id, lang)
+
+
+@router.post("/{tenant_id}/pause", response_model=TenantOut)
+async def pause_tenant(
+    owner: CurrentMember = Security(get_current_owner),
+    db: AsyncSession = Depends(get_pg_db),
+    lang: Lang = Depends(get_lang),
+) -> Tenant:
+    return await db_tenant.set_paused(db, owner.tenant_id, True, lang)
+
+
+@router.post("/{tenant_id}/resume", response_model=TenantOut)
+async def resume_tenant(
+    owner: CurrentMember = Security(get_current_owner),
+    db: AsyncSession = Depends(get_pg_db),
+    lang: Lang = Depends(get_lang),
+) -> Tenant:
+    return await db_tenant.set_paused(db, owner.tenant_id, False, lang)
+
+
+@router.delete("/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tenant(
+    data: TenantDeleteIn,
+    owner: CurrentMember = Security(get_current_owner),
+    db: AsyncSession = Depends(get_pg_db),
+    client: TelegramClient = Depends(get_telegram),
+    lang: Lang = Depends(get_lang),
+) -> None:
+    tenant_id = owner.tenant_id
+    await db_tenant.delete_tenant(db, tenant_id, data.confirm_slug, lang)
+    # A deleted store's bot must stop answering buyers. Best effort: the store is
+    # already gone, a Telegram hiccup must not undo that.
+    if await db_telegram.get_bot(db, tenant_id) is not None:
+        try:
+            await db_telegram.disconnect_bot(db, client, tenant_id, lang)
+        except Exception:
+            logger.warning("Bot of a deleted store not disconnected", extra={"tenant_id": tenant_id})

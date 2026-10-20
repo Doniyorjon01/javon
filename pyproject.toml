@@ -25,6 +25,7 @@ select = [
 "translations.py" = ["RUF001", "E501"]  # message texts are prose
 "services/telegram_texts.py" = ["RUF001", "E501"]  # chat messages are prose
 "utils/translit.py" = ["RUF001", "RUF002", "RUF003"]  # Cyrillic and apostrophe tables on purpose
+"services/excel.py" = ["RUF001", "RUF003"]  # Cyrillic header and language names on purpose
 "alembic/versions/*" = ["F401"]
 
 [tool.ruff.lint.flake8-bugbear]

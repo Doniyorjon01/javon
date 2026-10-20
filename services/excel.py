@@ -7,9 +7,9 @@ Columns (first row; Uzbek, Russian or English headers are all recognised):
     isbn       ISBN-10 or ISBN-13; may be empty
     title      required when the ISBN is not in the catalog yet
     authors    required with title; several separated by ";" (or ",")
-    publisher, language (uz|ru|en|other), script (latn|cyrl|other)
+    publisher, language (uz|ru|en|other, or "o'zbek", "rus"...), script (latn|cyrl, or "lotin", "kirill")
     price      in SO'M, as people write it: 45000, "45 000", 45000.00   (required)
-    quantity   how many are on the shelf; empty = 0
+    quantity   how many; added to the shelf or replacing it (InventoryImport.quantity_mode)
 
 Parsing only: what a row MEANS (match a catalog book, create one, put it on the
 shelf) is workers/inventory_import.py.
@@ -161,6 +161,33 @@ def parse_quantity(text: str) -> int | None:
     return int(number)
 
 
+# What people type in the language / script columns (normalized with search_key,
+# so "O'zbek", "o‘zbekcha" and "Ўзбек" all match).
+_LANGUAGES = {
+    "uz": ("uz", "uzb", "o'zbek", "o'zbekcha", "uzbek", "ўзбек", "ўзбекча", "узбекский", "узб"),
+    "ru": ("ru", "rus", "ruscha", "russian", "русский", "рус", "rus tili"),
+    "en": ("en", "eng", "ingliz", "inglizcha", "english", "английский", "англ"),
+    "other": ("other", "boshqa", "другой", "прочий"),
+}
+_SCRIPTS = {
+    "latn": ("latn", "latin", "lotin", "lotincha", "латиница", "лотин", "lat"),
+    "cyrl": ("cyrl", "cyrillic", "kirill", "kirillcha", "кириллица", "кирилл", "kir"),
+    "other": ("other", "boshqa", "другой"),
+}
+_LANGUAGE_BY_KEY = {search_key(alias): code for code, aliases in _LANGUAGES.items() for alias in aliases}
+_SCRIPT_BY_KEY = {search_key(alias): code for code, aliases in _SCRIPTS.items() for alias in aliases}
+
+
+def parse_language(text: str) -> str | None:
+    """ "O'zbek", "uz", "русский" -> "uz" / "ru" ...; None if unknown."""
+    return _LANGUAGE_BY_KEY.get(search_key(text))
+
+
+def parse_script(text: str) -> str | None:
+    """ "lotin", "Кириллица", "cyrl" -> "latn" / "cyrl"; None if unknown."""
+    return _SCRIPT_BY_KEY.get(search_key(text))
+
+
 def split_authors(text: str) -> list[str]:
     separator = ";" if ";" in text else ","
     return [name.strip() for name in text.split(separator) if name.strip()]
@@ -174,10 +201,10 @@ _HELP = (
     ("title", "Kitob nomi. ISBN katalogda bo'lmasa yoki ISBN yo'q bo'lsa majburiy."),
     ("authors", "Muallif(lar). Bir nechta bo'lsa ; bilan ajrating: Abdulla Qodiriy; Cho'lpon"),
     ("publisher", "Nashriyot (ixtiyoriy)."),
-    ("language", "uz, ru, en yoki other. Bo'sh bo'lsa uz."),
-    ("script", "latn (lotin) yoki cyrl (kirill). Bo'sh bo'lsa nomidan aniqlanadi."),
+    ("language", "O'zbek (uz), rus (ru), ingliz (en) yoki boshqa. Bo'sh bo'lsa o'zbek."),
+    ("script", "Lotin (latn) yoki kirill (cyrl). Bo'sh bo'lsa nomidan aniqlanadi."),
     ("price", "Narx, so'mda: 45000"),
-    ("quantity", "Nechta bor. Bo'sh bo'lsa 0."),
+    ("quantity", "Nechta. Yuklashda tanlaysiz: qoldiqqa qo'shiladi yoki qoldiq shu songa almashtiriladi."),
 )
 
 

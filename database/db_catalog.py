@@ -2,10 +2,12 @@
 Catalog — database layer
 ========================
 Platform-level tables (no RLS), so every store-facing query here carries an
-explicit visibility filter: approved books, plus the asking store's own pending
-ones (see models/catalog.py). A store may also open its own rejected books, to
-read the moderator's note, but never finds them in search. Moderation functions
-(the platform admin) see all.
+explicit visibility filter: every book that is not rejected. A book a store adds
+(status pending) is found by EVERY store at once, so the shared catalog grows by
+itself: the second store that sells "O'tkan kunlar" picks the first store's entry
+instead of typing it again. The platform admin still reviews pending books
+(approve, fix, or reject; a rejected book disappears from search). A store may
+also open its own rejected books, to read the moderator's note.
 
 Every write goes through _set_derived(), so books.search_text and
 books.dedupe_key always reflect the data actually stored.
@@ -35,7 +37,7 @@ from services.storage import Storage
 from translations import Msg
 from utils.i18n import DEFAULT_LANG, Lang
 from utils.images import COVER_SPEC
-from utils.isbn import looks_like_isbn, normalize_isbn
+from utils.isbn import expected_check_digit, looks_like_isbn, normalize_isbn
 from utils.translit import book_dedupe_key, detect_script, search_key
 
 ISBN_UNIQUE_INDEX = "uq_books_isbn13_live"
@@ -46,13 +48,10 @@ MIN_QUERY_LENGTH = 2
 # Reading
 # --------------------------------------------------------------------------- #
 def visible_to(tenant_id: int) -> ColumnElement[bool]:
-    return and_(
-        Book.is_active.is_(True),
-        or_(
-            Book.status == BookStatus.APPROVED,
-            and_(Book.status == BookStatus.PENDING, Book.created_by_tenant_id == tenant_id),
-        ),
-    )
+    """Approved and pending books, whoever added them (tenant_id is kept so the rule
+    can depend on the store again without touching every caller)."""
+    _ = tenant_id
+    return and_(Book.is_active.is_(True), Book.status != BookStatus.REJECTED)
 
 
 def _readable_by(tenant_id: int) -> ColumnElement[bool]:
@@ -111,13 +110,23 @@ def get_submissions(tenant_id: int, book_status: BookStatus | None = None) -> Se
     return _with_relations(stmt).order_by(Book.created_at.desc(), Book.id.desc())
 
 
+def parse_isbn(raw_isbn: str, lang: Lang = DEFAULT_LANG) -> str:
+    """ISBN-13 digits, or 400: "12345" is not an ISBN at all (isbn_invalid); a real-looking
+    one with a wrong last digit says which digit it should be (isbn_check_digit)."""
+    isbn13 = normalize_isbn(raw_isbn)
+    if isbn13 is not None:
+        return isbn13
+    expected = expected_check_digit(raw_isbn)
+    if expected is not None:
+        raise generate_error(Msg.ISBN_CHECK_DIGIT, lang, format_values=(expected,))
+    raise generate_error(Msg.ISBN_INVALID, lang)
+
+
 async def get_book_by_isbn(
     db: AsyncSession, tenant_id: int, raw_isbn: str, lang: Lang = DEFAULT_LANG
 ) -> Book:
     """For the barcode scanner. 404 means "not in the catalog yet: offer to add it"."""
-    isbn13 = normalize_isbn(raw_isbn)
-    if isbn13 is None:
-        raise generate_error(Msg.INVALID_ISBN, lang, format_values=(raw_isbn,))
+    isbn13 = parse_isbn(raw_isbn, lang)
     book = await db.scalar(_with_relations(select(Book).where(Book.isbn13 == isbn13, visible_to(tenant_id))))
     if book is None:
         raise generate_error(
@@ -172,24 +181,27 @@ async def get_any_book(db: AsyncSession, book_id: int, lang: Lang = DEFAULT_LANG
 # Writing
 # --------------------------------------------------------------------------- #
 async def _get_or_create_author(db: AsyncSession, name: str) -> Author:
-    """One author per search key. The first spelling stored is kept."""
-    key = search_key(name)
+    """One author per search key AND alphabet: a Cyrillic spelling stays Cyrillic.
+    Within one alphabet the first spelling stored is kept."""
+    key, script = search_key(name), BookScript(detect_script(name))
     await db.execute(
         pg_insert(Author)
-        .values(name=name, search_key=key)
-        .on_conflict_do_nothing(index_elements=[Author.search_key])
+        .values(name=name, search_key=key, script=script)
+        .on_conflict_do_nothing(index_elements=[Author.search_key, Author.script])
     )
-    return (await db.scalars(select(Author).where(Author.search_key == key))).one()
+    return (await db.scalars(select(Author).where(Author.search_key == key, Author.script == script))).one()
 
 
 async def _get_or_create_publisher(db: AsyncSession, name: str) -> Publisher:
-    key = search_key(name)
+    key, script = search_key(name), BookScript(detect_script(name))
     await db.execute(
         pg_insert(Publisher)
-        .values(name=name, search_key=key)
-        .on_conflict_do_nothing(index_elements=[Publisher.search_key])
+        .values(name=name, search_key=key, script=script)
+        .on_conflict_do_nothing(index_elements=[Publisher.search_key, Publisher.script])
     )
-    return (await db.scalars(select(Publisher).where(Publisher.search_key == key))).one()
+    return (
+        await db.scalars(select(Publisher).where(Publisher.search_key == key, Publisher.script == script))
+    ).one()
 
 
 async def _set_authors(db: AsyncSession, book: Book, names: list[str]) -> list[Author]:

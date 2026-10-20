@@ -40,9 +40,11 @@ from models.catalog import (
 )
 from schemas.base import ORMModel
 from services.media import image_urls
+from translations import Msg
+from utils import validation
 from utils.images import COVER_SPEC
-from utils.isbn import normalize_isbn
 from utils.translit import search_key
+from utils.validation import invalid
 
 
 def _empty_to_none(value: Any) -> Any:
@@ -52,22 +54,19 @@ def _empty_to_none(value: Any) -> Any:
 
 
 def _valid_isbn(value: str) -> str:
-    isbn13 = normalize_isbn(value)
-    if isbn13 is None:
-        raise ValueError("not a valid ISBN-10 or ISBN-13 (check the digits)")
-    return isbn13
+    return validation.isbn(value)
 
 
 def _searchable(value: str) -> str:
     if not search_key(value):
-        raise ValueError("must contain letters or digits")
+        raise invalid(Msg.TEXT_NEEDS_LETTERS)
     return value
 
 
 def _unique_names(names: list[str]) -> list[str]:
     keys = [search_key(name) for name in names]
     if len(set(keys)) != len(keys):
-        raise ValueError("the same author is listed twice")
+        raise invalid(Msg.AUTHOR_REPEAT)
     return names
 
 

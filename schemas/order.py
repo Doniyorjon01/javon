@@ -28,7 +28,10 @@ from pydantic import (
 
 from models.order import DeliveryType, OrderChannel, OrderStatus, PaymentMethod, PaymentStatus
 from schemas.base import BIGINT_MAX, ORMModel
-from utils.phone import mask_phone, normalize_phone
+from translations import Msg
+from utils import validation
+from utils.phone import mask_phone
+from utils.validation import invalid
 
 MAX_ORDER_LINES = 50
 MAX_LINE_QUANTITY = 99
@@ -40,7 +43,7 @@ def _empty_to_none(value: Any) -> Any:
     return value
 
 
-BuyerPhone = Annotated[str, AfterValidator(normalize_phone)]
+BuyerPhone = Annotated[str, AfterValidator(validation.phone)]
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=80)]
 Address = Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=255)]
 Comment = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
@@ -72,19 +75,19 @@ class OrderCreate(BaseModel):
     @classmethod
     def _one_line_per_book(cls, items: list[OrderLineIn]) -> list[OrderLineIn]:
         if len({line.book_id for line in items}) != len(items):
-            raise ValueError("each book may appear only once; use quantity")
+            raise invalid(Msg.DUPLICATE_ORDER_LINES)
         return items
 
     @model_validator(mode="after")
     def _delivery_needs_address(self) -> Self:
         if self.delivery_type == DeliveryType.DELIVERY and self.address is None:
-            raise ValueError("address is required for delivery")
+            raise invalid(Msg.ADDRESS_REQUIRED)
         if self.delivery_type == DeliveryType.PICKUP:
             # A pickup order has no destination; do not keep one the buyer typed earlier.
             self.address = None
             self.latitude = self.longitude = None
         if (self.latitude is None) != (self.longitude is None):
-            raise ValueError("latitude and longitude must be sent together")
+            raise invalid(Msg.LOCATION_PAIR)
         return self
 
 
@@ -201,9 +204,31 @@ class PaymentReviewIn(BaseModel):
     @model_validator(mode="after")
     def _refusal_has_reason(self) -> Self:
         if not self.approve and not self.note:
-            raise ValueError("note is required when the receipt is refused")
+            raise invalid(Msg.REFUSAL_NOTE_REQUIRED)
         return self
 
 
 class OrderStatsOut(BaseModel):
     by_status: dict[OrderStatus, int]
+
+
+class OrderRefIn(BaseModel):
+    """An order the buyer's browser remembers, with its tracking token."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int = Field(gt=0, le=BIGINT_MAX)
+    token: str = Field(min_length=10, max_length=64)
+
+
+class OrderStatusesIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    orders: list[OrderRefIn] = Field(min_length=1, max_length=50)
+
+
+class OrderStatusOut(ORMModel):
+    id: int
+    number: int
+    status: OrderStatus
+    payment_status: PaymentStatus

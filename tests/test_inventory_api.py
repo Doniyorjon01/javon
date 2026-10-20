@@ -47,7 +47,8 @@ async def test_owner_puts_a_book_on_sale(client: AsyncClient, db: AsyncSession) 
     assert by_isbn.json()["id"] == item["id"]
 
 
-async def test_only_books_the_store_may_see_can_be_added(client: AsyncClient, db: AsyncSession) -> None:
+async def test_pending_and_rejected_books_on_the_shelf(client: AsyncClient, db: AsyncSession) -> None:
+    """Any store may sell a book another store added (shared catalog); a rejected one, no."""
     tenant, owner, _ = await store(db)
     other, other_owner, _ = await store(db, "boshqa")
     await sign_in(client, other_owner)
@@ -64,8 +65,9 @@ async def test_only_books_the_store_may_see_can_be_added(client: AsyncClient, db
         )
     ).json()
     url = f"/tenants/{tenant.id}/inventory"
-    assert (await client.post(url, json={"book_id": foreign_pending["id"], "price": 100})).status_code == 404
+    assert (await client.post(url, json={"book_id": foreign_pending["id"], "price": 100})).status_code == 201
     assert (await client.post(url, json={"book_id": own_pending["id"], "price": 100})).status_code == 201
+    assert (await client.post(url, json={"book_id": 999_999, "price": 100})).status_code == 404
 
 
 async def test_staff_counts_stock_but_does_not_set_prices(client: AsyncClient, db: AsyncSession) -> None:

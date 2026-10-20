@@ -114,15 +114,22 @@ async def test_isbn_lookup(client: AsyncClient, db: AsyncSession) -> None:
     assert missing.status_code == 404
     assert missing.json()["detail"]["code"] == "book_isbn_not_found"
 
+    # A real-looking ISBN with a wrong last digit: the message names the right digit.
     invalid = await client.get(f"{base}/9780306406158")
     assert invalid.status_code == 400
-    assert invalid.json()["detail"]["code"] == "invalid_isbn"
+    assert invalid.json()["detail"]["code"] == "isbn_check_digit"
+    assert "7" in invalid.json()["detail"]["message"]
+    # Not an ISBN at all: said so, never "not in the catalog".
+    short = await client.get(f"{base}/12345")
+    assert short.status_code == 400
+    assert short.json()["detail"]["code"] == "isbn_invalid"
 
 
 # --------------------------------------------------------------------------- #
 # A store's own submissions
 # --------------------------------------------------------------------------- #
-async def test_submitted_book_is_private_until_approved(client: AsyncClient, db: AsyncSession) -> None:
+async def test_submitted_book_is_shared_at_once(client: AsyncClient, db: AsyncSession) -> None:
+    """A store's new book grows the shared catalog: other stores find it right away."""
     store_a, owner_a = await store_with_owner(db, "varaq")
     store_b, owner_b = await store_with_owner(db, "kitobxon")
     admin = await make_user(db, "Admin", is_platform_admin=True)
@@ -137,11 +144,15 @@ async def test_submitted_book_is_private_until_approved(client: AsyncClient, db:
     assert await search(client, store_a, "qodiriy") == ["O'tkan kunlar"]
     assert (await client.get(f"/tenants/{store_a.id}/catalog/books/{book['id']}")).status_code == 200
 
-    # Another store cannot see it, by any route.
+    # Another store finds it too, by every route, still marked "pending".
     await sign_in(client, owner_b)
-    assert await search(client, store_b, "qodiriy") == []
-    assert (await client.get(f"/tenants/{store_b.id}/catalog/books/{book['id']}")).status_code == 404
-    assert (await client.get(f"/tenants/{store_b.id}/catalog/isbn/9780306406157")).status_code == 404
+    assert await search(client, store_b, "qodiriy") == ["O'tkan kunlar"]
+    assert (await client.get(f"/tenants/{store_b.id}/catalog/books/{book['id']}")).status_code == 200
+    by_isbn = await client.get(f"/tenants/{store_b.id}/catalog/isbn/9780306406157")
+    assert by_isbn.status_code == 200 and by_isbn.json()["status"] == "pending"
+    # Adding the same book again is caught: the second store uses the first one's entry.
+    again = await client.post(f"/tenants/{store_b.id}/catalog/books", json=OTKAN_KUNLAR)
+    assert again.status_code == 409
 
     await sign_in(client, admin)
     approved = await client.post(f"/system/catalog/books/{book['id']}/approve")
@@ -201,11 +212,20 @@ async def test_client_cannot_self_approve(client: AsyncClient, db: AsyncSession)
     assert resp.status_code == 422
 
 
-async def test_one_author_across_scripts(db: AsyncSession) -> None:
+async def test_each_alphabet_keeps_its_spelling(client: AsyncClient, db: AsyncSession) -> None:
+    """A Cyrillic edition shows its author in Cyrillic; a search in either alphabet finds both."""
     await approved_book(db, title="O'tkan kunlar", authors=["Abdulla Qodiriy"])
     await approved_book(db, title="Меҳробдан чаён", authors=["Абдулла Қодирий"])
-    authors = list(await db.scalars(select(Author)))
-    assert [a.name for a in authors] == ["Abdulla Qodiriy"]
+    await approved_book(db, title="Kecha va kunduz", authors=["Abdulla Qodiriy"])
+    authors = list(await db.scalars(select(Author).order_by(Author.id)))
+    assert [(a.name, a.script) for a in authors] == [("Abdulla Qodiriy", "latn"), ("Абдулла Қодирий", "cyrl")]
+
+    tenant, owner = await store_with_owner(db, "varaq")
+    await sign_in(client, owner)
+    found = (await client.get(f"/tenants/{tenant.id}/catalog/books", params={"q": "Қодирий"})).json()["items"]
+    names = {book["title"]: book["authors"][0]["name"] for book in found}
+    assert names["Меҳробдан чаён"] == "Абдулла Қодирий"
+    assert names["O'tkan kunlar"] == "Abdulla Qodiriy"
 
 
 # --------------------------------------------------------------------------- #

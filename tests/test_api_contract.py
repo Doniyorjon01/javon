@@ -55,8 +55,9 @@ async def test_validation_error_shape(app: FastAPI, client: AsyncClient) -> None
     assert resp.status_code == 422
     detail = resp.json()["detail"]
     assert detail["code"] == "validation_error"
-    assert detail["message"] == "The submitted data is invalid."
-    assert detail["errors"][0]["loc"] == ["path", "value"]
+    # The first problem, as a sentence in the request's language (utils/validation.py).
+    assert detail["message"] == "Enter a number."
+    assert detail["errors"][0] == {"type": "int_parsing", "loc": ["path", "value"], "msg": "Enter a number."}
     # What the client sent is not echoed back.
     assert "input" not in detail["errors"][0]
 

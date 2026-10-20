@@ -59,6 +59,7 @@ class MyStoreOut(ORMModel):
     status: TenantStatus
     role: MemberRole
     launched_at: datetime | None  # None: send the owner back to the setup wizard
+    paused_at: datetime | None  # set: the owner closed the storefront for a while
     # trial / active / grace (show a "pay soon" banner) / expired or suspended
     # (storefront hidden, panel read-only). Details: GET /tenants/{id}/subscription.
     access: AccessState

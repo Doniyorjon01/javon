@@ -14,7 +14,7 @@ from models.catalog import (
     BookStatus,
     Publisher,
 )
-from models.inventory import ImportStatus, InventoryImport, InventoryItem
+from models.inventory import ImportStatus, InventoryImport, InventoryItem, QuantityMode
 from models.job import Job, JobStatus
 from models.order import (
     Customer,
@@ -60,6 +60,7 @@ __all__ = [
     "PaymentStatus",
     "Plan",
     "Publisher",
+    "QuantityMode",
     "StaffInvite",
     "SubscriptionPayment",
     "TelegramBot",

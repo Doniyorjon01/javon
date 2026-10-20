@@ -55,7 +55,7 @@ async def search_books(
 
 @router.get("/isbn/{isbn}", response_model=BookOut)
 async def get_book_by_isbn(
-    isbn: str = Path(min_length=10, max_length=20),
+    isbn: str = Path(min_length=1, max_length=20),
     member: CurrentMember = Security(get_current_member),
     db: AsyncSession = Depends(get_pg_db),
     lang: Lang = Depends(get_lang),

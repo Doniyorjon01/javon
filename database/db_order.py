@@ -262,6 +262,16 @@ async def get_order(db: AsyncSession, tenant_id: int, order_id: int, lang: Lang 
     return order
 
 
+async def get_statuses(db: AsyncSession, tenant_id: int, order_ids: list[int]) -> list[Order]:
+    """Status of several orders at once ("My orders" in the buyer's browser); unknown ids are left out."""
+    if not order_ids:
+        return []
+    rows = await db.scalars(
+        select(Order).where(Order.tenant_id == tenant_id, Order.id.in_(order_ids)).order_by(Order.id.desc())
+    )
+    return list(rows)
+
+
 def get_orders(
     tenant_id: int, *, order_status: OrderStatus | None = None, query: str | None = None
 ) -> Select:

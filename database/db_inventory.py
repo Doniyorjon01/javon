@@ -28,7 +28,7 @@ from database.db_job import JobKind
 from database.integrity import constraint_name
 from errors import generate_error
 from models.catalog import Book
-from models.inventory import InventoryImport, InventoryItem
+from models.inventory import MAX_QUANTITY, InventoryImport, InventoryItem, QuantityMode
 from models.tenant import MemberRole, Plan, Tenant
 from schemas.inventory import InventoryItemCreate, InventoryItemUpdate, InventorySort
 from services.excel import ExcelError, read_rows
@@ -131,9 +131,7 @@ async def get_item_by_isbn(
     db: AsyncSession, tenant_id: int, raw_isbn: str, lang: Lang = DEFAULT_LANG
 ) -> InventoryItem:
     """Barcode scanner on the shelf: "do we have this one, and how many?"."""
-    isbn13 = normalize_isbn(raw_isbn)
-    if isbn13 is None:
-        raise generate_error(Msg.INVALID_ISBN, lang, format_values=(raw_isbn,))
+    isbn13 = db_catalog.parse_isbn(raw_isbn, lang)
     item = await db.scalar(
         _with_book(select(InventoryItem))
         .join(Book, Book.id == InventoryItem.book_id)
@@ -261,22 +259,36 @@ async def delete_item(db: AsyncSession, tenant_id: int, item_id: int, lang: Lang
 
 
 async def upsert_from_import(
-    db: AsyncSession, tenant_id: int, book_id: int, price: int, quantity: int, lang: Lang
+    db: AsyncSession,
+    tenant_id: int,
+    book_id: int,
+    price: int,
+    quantity: int,
+    lang: Lang,
+    mode: QuantityMode = QuantityMode.ADD,
 ) -> bool:
-    """Excel row: set price and quantity, adding the book if needed. True if added.
-    The file says how many there are now, so quantity is SET, not added."""
+    """
+    Excel row: set the price, and ADD the quantity to the shelf ("2 arrived") or
+    SET it ("there are 2 now"), adding the book if needed. True if added.
+    Does not commit: the caller commits together with the import's progress, so
+    a retried import never adds the same row twice.
+    """
     item_id = await _find_item_id(db, tenant_id, book_id)
     if item_id is not None:
+        new_quantity = (
+            func.least(InventoryItem.quantity + quantity, MAX_QUANTITY)
+            if mode == QuantityMode.ADD
+            else quantity
+        )
         await db.execute(
             update(InventoryItem)
             .where(InventoryItem.id == item_id, InventoryItem.tenant_id == tenant_id)
-            .values(price=price, quantity=quantity)
+            .values(price=price, quantity=new_quantity)
         )
-        await db.commit()
         return False
     await _check_item_limit(db, tenant_id, lang)
     db.add(InventoryItem(tenant_id=tenant_id, book_id=book_id, price=price, quantity=quantity))
-    await db.commit()
+    await db.flush()
     return True
 
 
@@ -290,6 +302,7 @@ async def create_import(
     file_name: str,
     data: bytes,
     lang: Lang = DEFAULT_LANG,
+    quantity_mode: QuantityMode = QuantityMode.ADD,
 ) -> InventoryImport:
     """
     Check that the file is a readable sheet with the needed columns (so the store
@@ -317,6 +330,7 @@ async def create_import(
         file_data=data,
         lang=lang.value,
         total_rows=len(rows),
+        quantity_mode=quantity_mode,
     )
     db.add(record)
     await db.flush()

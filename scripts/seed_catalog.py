@@ -83,17 +83,23 @@ async def _already_loaded(db: AsyncSession, book: BookCreate) -> bool:
 
 
 async def load(path: Path, *, dry_run: bool = False) -> Report:
-    report = Report()
     with path.open(encoding="utf-8-sig", newline="") as fh:
         rows = list(csv.DictReader(fh))
+    return await load_rows(rows, dry_run=dry_run, first=2, where="line")  # line 1 is the header
 
+
+async def load_rows(
+    rows: list[dict[str, str | None]], *, dry_run: bool = False, first: int = 1, where: str = "row"
+) -> Report:
+    """The CSV columns as dicts (also used by scripts/seed_starter_books.py)."""
+    report = Report()
     async with SessionLocal() as db:
-        for line_no, row in enumerate(rows, start=2):  # line 1 is the header
+        for line_no, row in enumerate(rows, start=first):
             try:
                 book = parse_row(row)
             except ValidationError as exc:
                 reasons = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
-                report.errors.append(f"line {line_no}: {reasons}")
+                report.errors.append(f"{where} {line_no}: {reasons}")
                 continue
 
             if await _already_loaded(db, book):
@@ -106,7 +112,7 @@ async def load(path: Path, *, dry_run: bool = False) -> Report:
                 await db_catalog.create_book(db, book, tenant_id=None, book_status=BookStatus.APPROVED)
                 report.added += 1
             except HTTPException as exc:  # e.g. the same ISBN twice in one file
-                report.errors.append(f"line {line_no}: {exc.detail['message']}")
+                report.errors.append(f"{where} {line_no}: {exc.detail['message']}")
     return report
 
 
